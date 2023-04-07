@@ -15,11 +15,6 @@ interface IDetails {
     function symbol() external view returns (string memory);
 }
 
-interface IGaugeController {
-    // check if gauge has weight
-    function get_gauge_weight(address) external view returns (uint256);
-}
-
 interface IVoter {
     // get details from our curve voter
     function strategy() external view returns (address);
@@ -114,34 +109,9 @@ interface IStrategy {
         address _gauge
     ) external returns (address newStrategy);
 
-    function cloneStrategyConvexFrax(
-        address _vault,
-        address _strategist,
-        address _rewards,
-        address _keeper,
-        address _tradeFactory,
-        uint256 _fraxPid,
-        address _stakingAddress,
-        uint256 _harvestProfitMinInUsdc,
-        uint256 _harvestProfitMaxInUsdc,
-        address _booster
-    ) external returns (address newStrategy);
-
     function setVoter(address _curveVoter) external;
 
     function setVoters(address _curveVoter, address _convexVoter) external;
-
-    function setVoters(
-        address _curveVoter,
-        address _convexVoter,
-        address _fxsVoter
-    ) external;
-
-    function setLocalKeepCrvs(
-        uint256 _keepCrv,
-        uint256 _keepCvx,
-        uint256 _keepFxs
-    ) external;
 
     function setLocalKeepCrvs(uint256 _keepCrv, uint256 _keepCvx) external;
 
@@ -191,15 +161,14 @@ interface Vault {
     function addStrategy(address, uint256, uint256, uint256, uint256) external;
 }
 
-contract CurveGlobal {
+contract BalancerGlobal {
     event NewAutomatedVault(
         uint256 indexed category,
         address indexed lpToken,
         address gauge,
         address indexed vault,
         address convexStrategy,
-        address curveStrategy,
-        address convexFraxStrategy
+        address curveStrategy
     );
 
     /* ========== STATE VARIABLES ========== */
@@ -209,7 +178,7 @@ contract CurveGlobal {
 
     /// @notice This is specific to the protocol we are deploying automated vaults for.
     /// @dev 0 for curve, 1 for balancer. This is a subcategory within our vault type AUTOMATED on the registry.
-    uint256 public constant CATEGORY = 0;
+    uint256 public constant CATEGORY = 1;
 
     /// @notice Owner of the factory.
     address public owner;
@@ -219,28 +188,18 @@ contract CurveGlobal {
     address public pendingOwner;
 
     /// @notice Address of our Convex token.
-    address public constant CVX = 0x4e3FBD56CD56c3e72c1403e103b45Db9da5B9D2B;
+    address public constant CVX = 0xC0c293ce456fF0ED870ADd98a0828Dd4d2903DBF;
 
     /// @notice Address of our Convex pool manager.
     /// @dev Used to add new pools to Convex.
-    address public convexPoolManager =
-        0xD1f9b3de42420A295C33c07aa5C9e04eDC6a4447;
-
-    /// @notice Address of our Convex Frax pool registry.
-    /// @dev Used to determine if a Convex pool has a Convex Frax pool.
-    address public convexFraxPoolRegistry =
-        0x41a5881c17185383e19Df6FA4EC158a6F4851A69;
+    address public convexPoolManager = 0xf843F61508Fc17543412DE55B10ED87f4C28DE50;
 
     /// @notice Yearn's vault registry address.
     IRegistry public registry;
 
     /// @notice Address of Convex's deposit contract, aka booster.
     IBooster public booster =
-        IBooster(0xF403C135812408BFbE8713b5A23a04b3D48AAE31);
-
-    /// @notice Address of Convex's Frax booster.
-    IBooster public fraxBooster =
-        IBooster(0x569f5B842B5006eC17Be02B8b94510BA8e79FbCa);
+        IBooster(0x7818A1DA7BD1E64c199029E86Ba244a9798eEE10);
 
     /// @notice Address to use for vault governance.
     address public governance = 0xFEB4acf3df3cDEA7399794D0869ef76A6EfAff52;
@@ -267,34 +226,24 @@ contract CurveGlobal {
     address public baseFeeOracle = 0x1E7eFAbF282614Aa2543EDaA50517ef5a23c868b;
 
     /// @notice Address of our Convex strategy implementation.
-    /// @dev If zero address, then factory will produce vaults with only Curve strategies.
+    /// @dev This cannot be zero address for Balancer vaults.
     address public convexStratImplementation;
 
     /// @notice Address of our Curve strategy implementation.
-    /// @dev This cannot be zero address for Curve vaults.
+    /// @dev If zero address, then factory will produce vaults with only Convex strategies.
     address public curveStratImplementation;
-
-    /// @notice Address of our Convex Frax strategy implementation.
-    /// @dev If zero address, then factory will produce vaults without Convex Frax strategies.
-    address public convexFraxStratImplementation;
 
     /// @notice The percentage of CRV we re-lock for boost (in basis points). Default is 0%.
     uint256 public keepCRV;
 
     /// @notice The address of our Curve voter. This is where we send any keepCRV.
-    address public curveVoter = 0xF147b8125d2ef93FB6965Db97D6746952a133934;
+    address public curveVoter;
 
     /// @notice The percentage of CVX we re-lock (in basis points). Default is 0%.
     uint256 public keepCVX;
 
     /// @notice The address of our Convex voter. This is where we send any keepCVX.
     address public convexVoter;
-
-    /// @notice The percentage of FXS we re-lock for boost (in basis points). Default is 0%.
-    uint256 public keepFXS;
-
-    /// @notice The address of our Frax voter. This is where we send any keepFXS.
-    address public fraxVoter;
 
     /// @notice Minimum profit size in USDC that we want to harvest.
     uint256 public harvestProfitMinInUsdc = 7_500 * 1e6;
@@ -317,13 +266,11 @@ contract CurveGlobal {
         address _registry,
         address _convexStratImplementation,
         address _curveStratImplementation,
-        address _convexFraxStratImplementation,
         address _owner
     ) {
         registry = IRegistry(_registry);
         convexStratImplementation = _convexStratImplementation;
         curveStratImplementation = _curveStratImplementation;
-        convexFraxStratImplementation = _convexFraxStratImplementation;
         owner = _owner;
         pendingOwner = _owner;
     }
@@ -360,18 +307,6 @@ contract CurveGlobal {
         convexPoolManager = _convexPoolManager;
     }
 
-    /// @notice Set the convex frax pool registry address for the factory.
-    /// @dev Must be called by owner.
-    /// @param _convexFraxPoolRegistry Address of convex frax pool registry.
-    function setConvexFraxPoolRegistry(
-        address _convexFraxPoolRegistry
-    ) external {
-        if (msg.sender != owner) {
-            revert();
-        }
-        convexFraxPoolRegistry = _convexFraxPoolRegistry;
-    }
-
     /// @notice Set the yearn vault registry address for the factory.
     /// @dev Must be called by owner.
     /// @param _registry Address of yearn vault registry.
@@ -390,16 +325,6 @@ contract CurveGlobal {
             revert();
         }
         booster = IBooster(_booster);
-    }
-
-    /// @notice Set the convex frax booster address for the factory.
-    /// @dev Must be called by owner.
-    /// @param _fraxBooster Address of convex frax booster.
-    function setFraxBooster(address _fraxBooster) external {
-        if (msg.sender != owner) {
-            revert();
-        }
-        fraxBooster = IBooster(_fraxBooster);
     }
 
     /// @notice Set the vault governance address for the factory.
@@ -518,18 +443,6 @@ contract CurveGlobal {
         curveStratImplementation = _curveStratImplementation;
     }
 
-    /// @notice Set the Convex Frax strategy implementation address.
-    /// @dev Must be called by owner.
-    /// @param _convexFraxStratImplementation Address of latest Convex Frax strategy implementation.
-    function setConvexFraxStratImplementation(
-        address _convexFraxStratImplementation
-    ) external {
-        if (msg.sender != owner) {
-            revert();
-        }
-        convexFraxStratImplementation = _convexFraxStratImplementation;
-    }
-
     /// @notice Direct a specified percentage of CRV from every harvest to Yearn's CRV voter.
     /// @dev Must be called by owner.
     /// @param _keepCRV The percentage of CRV from each harvest that we send to our voter (out of 10,000).
@@ -570,27 +483,6 @@ contract CurveGlobal {
 
         keepCVX = _keepCVX;
         convexVoter = _convexVoter;
-    }
-
-    /// @notice Direct a specified percentage of FXS from every harvest to Yearn's FXS voter.
-    /// @dev Must be called by owner.
-    /// @param _keepFXS The percentage of FXS from each harvest that we send to our voter (out of 10,000).
-    /// @param _fraxVoter The address of our Frax voter. This is where we send any keepFXS.
-    function setKeepFXS(uint256 _keepFXS, address _fraxVoter) external {
-        if (msg.sender != owner) {
-            revert();
-        }
-        if (_keepFXS > 10_000) {
-            revert();
-        }
-        if (_keepFXS > 0) {
-            if (_fraxVoter == address(0)) {
-                revert();
-            }
-        }
-
-        keepFXS = _keepFXS;
-        fraxVoter = _fraxVoter;
     }
 
     /// @notice Set the minimum amount of USDC profit required to harvest.
@@ -723,51 +615,6 @@ contract CurveGlobal {
         }
     }
 
-    /// @notice Check if a Convex pid is also available on Convex Frax.
-    /// @dev Try-catch may appear as reverts in some dev envs.
-    /// @param _convexPid The Convex pid to check.
-    /// @return hasFraxPool Whether or not the given Convex pid also has a Convex Frax pool.
-    /// @return convexFraxPid For Convex Frax pools, their assigned Convex Frax pid.
-    /// @return stakingAddress For Convex Frax pools, their pool staking address.
-    function getFraxInfo(
-        uint256 _convexPid
-    )
-        public
-        view
-        returns (
-            bool hasFraxPool,
-            uint256 convexFraxPid,
-            address stakingAddress
-        )
-    {
-        IPoolRegistry _convexFraxPoolRegistry = IPoolRegistry(
-            convexFraxPoolRegistry
-        );
-        for (uint256 i = _convexFraxPoolRegistry.poolLength(); i > 0; --i) {
-            // we start at the end and work back for most recent
-            (
-                ,
-                address _stakingAddress,
-                address stakingToken,
-                ,
-                uint8 isActive
-            ) = _convexFraxPoolRegistry.poolInfo(i - 1);
-            if (isActive == 0) {
-                // pool isn't active, skip
-                continue;
-            }
-
-            // check the convex pool pid for this frax pool pid. some staking tokens don't have this view
-            try IStakingToken(stakingToken).convexPoolId() returns (
-                uint256 currentPoolConvexPid
-            ) {
-                if (_convexPid == currentPoolConvexPid) {
-                    return (true, (i - 1), _stakingAddress);
-                }
-            } catch {}
-        }
-    }
-
     /// @notice Check our current Curve strategy proxy via our Curve voter.
     /// @return proxy Address of our current Curve strategy proxy.
     function getProxy() public view returns (address proxy) {
@@ -785,7 +632,6 @@ contract CurveGlobal {
     /// @return vault Address of the new vault.
     /// @return convexStrategy Address of the vault's Convex strategy, if created.
     /// @return curveStrategy Address of the vault's Curve boosted strategy.
-    /// @return convexFraxStrategy Address of the vault's Convex Frax strategy, if created.
     function createNewVaultsAndStrategiesPermissioned(
         address _gauge,
         string memory _name,
@@ -795,8 +641,7 @@ contract CurveGlobal {
         returns (
             address vault,
             address convexStrategy,
-            address curveStrategy,
-            address convexFraxStrategy
+            address curveStrategy
         )
     {
         if (!(msg.sender == owner || msg.sender == management)) {
@@ -813,7 +658,6 @@ contract CurveGlobal {
     /// @return vault Address of the new vault.
     /// @return convexStrategy Address of the vault's Convex strategy, if created.
     /// @return curveStrategy Address of the vault's Curve boosted strategy.
-    /// @return convexFraxStrategy Address of the vault's Convex Frax strategy, if created.
     function createNewVaultsAndStrategies(
         address _gauge
     )
@@ -821,8 +665,7 @@ contract CurveGlobal {
         returns (
             address vault,
             address convexStrategy,
-            address curveStrategy,
-            address convexFraxStrategy
+            address curveStrategy
         )
     {
         return
@@ -840,19 +683,9 @@ contract CurveGlobal {
         returns (
             address vault,
             address convexStrategy,
-            address curveStrategy,
-            address convexFraxStrategy
+            address curveStrategy
         )
     {
-        // a curve gauge must have weight for a vault to be deployed
-        IGaugeController gaugeController = IGaugeController(
-            0x2F50D538606Fa9EDD2B11E2446BEb18C9D5846bB
-        );
-        require(
-            gaugeController.get_gauge_weight(_gauge) > 0,
-            "Gauge must have weight"
-        );
-
         // if a legacy vault already exists, only permissioned users can deploy another
         if (!_permissionedUser) {
             require(
@@ -892,7 +725,7 @@ contract CurveGlobal {
         _setupVaultParams(vault);
 
         // setup our strategies as needed
-        (convexStrategy, curveStrategy, convexFraxStrategy) = _setupStrategies(
+        (convexStrategy, curveStrategy) = _setupStrategies(
             vault,
             _gauge,
             pid
@@ -904,8 +737,7 @@ contract CurveGlobal {
             _gauge,
             vault,
             convexStrategy,
-            curveStrategy,
-            convexFraxStrategy
+            curveStrategy
         );
     }
 
@@ -938,14 +770,14 @@ contract CurveGlobal {
             treasury,
             string(
                 abi.encodePacked(
-                    "Curve ",
+                    "Balancer ",
                     IDetails(address(lptoken)).symbol(),
                     " Factory yVault"
                 )
             ),
             string(
                 abi.encodePacked(
-                    "yvCurve-",
+                    "yvBal-",
                     IDetails(address(lptoken)).symbol(),
                     "-f"
                 )
@@ -984,28 +816,13 @@ contract CurveGlobal {
         internal
         returns (
             address convexStrategy,
-            address curveStrategy,
-            address convexFraxStrategy
+            address curveStrategy
         )
     {
-        // check if we can add a convex frax strategy for this pool, ganache can't handle this (use tenderly)
-        (
-            bool hasFraxPool,
-            uint256 fraxPid,
-            address stakingAddress
-        ) = getFraxInfo(_pid);
-
-        // we have a frax implementation, so we know we at least want convex and curve boosted strategies
+        // we know we want convex and curve boosted strategies
         convexStrategy = _addConvexStrategy(_vault, _pid);
-        curveStrategy = _addCurveStrategy(_vault, _gauge, hasFraxPool);
-
-        if (hasFraxPool) {
-            // we attach a frax strategy here since this is a frax pool
-            convexFraxStrategy = _addConvexFraxStrategy(
-                _vault,
-                fraxPid,
-                stakingAddress
-            );
+        if (curveStratImplementation != address(0)) {
+            curveStrategy = _addCurveStrategy(_vault, _gauge);
         }
     }
 
@@ -1038,8 +855,9 @@ contract CurveGlobal {
             IStrategy(convexStrategy).setLocalKeepCrvs(keepCRV, keepCVX);
         }
 
-        // convex debtRatio can always start at 0
-        Vault(_vault).addStrategy(convexStrategy, 0, 0, type(uint256).max, 0);
+        // convex debtRatio can always start at 10_000
+        uint256 convexDebtRatio = 10_000;
+        Vault(_vault).addStrategy(convexStrategy, convexDebtRatio, 0, type(uint256).max, 0);
     }
 
     // deploy and attach a new curve boosted strategy using our factory's existing implementation
@@ -1075,10 +893,7 @@ contract CurveGlobal {
             IStrategy(curveStrategy).setLocalKeepCrv(keepCRV);
         }
 
-        uint256 curveDebtRatio = 10_000;
-        if (_hasFraxPool) {
-            curveDebtRatio = 2_000;
-        }
+        uint256 curveDebtRatio = 0;
 
         Vault(_vault).addStrategy(
             curveStrategy,
@@ -1090,53 +905,5 @@ contract CurveGlobal {
 
         // approve our new voter strategy on the proxy
         proxy.approveStrategy(_gauge, curveStrategy);
-    }
-
-    // deploy and attach a new convex frax strategy using our factory's existing implementation
-    function _addConvexFraxStrategy(
-        address _vault,
-        uint256 _fraxPid,
-        address _stakingAddress
-    ) internal returns (address convexFraxStrategy) {
-        convexFraxStrategy = IStrategy(convexFraxStratImplementation)
-            .cloneStrategyConvexFrax(
-                _vault,
-                management,
-                treasury,
-                keeper,
-                tradeFactory,
-                _fraxPid,
-                _stakingAddress,
-                harvestProfitMinInUsdc,
-                harvestProfitMaxInUsdc,
-                address(fraxBooster)
-            );
-
-        // set up health check and the base fee oracle for our new strategy
-        IStrategy(convexFraxStrategy).setHealthCheck(healthCheck);
-        IStrategy(convexFraxStrategy).setBaseFeeOracle(baseFeeOracle);
-
-        // if we're keeping any tokens, then setup our voters
-        if (keepCRV > 0 || keepCVX > 0 || keepFXS > 0) {
-            IStrategy(convexFraxStrategy).setVoters(
-                curveVoter,
-                convexVoter,
-                fraxVoter
-            );
-            IStrategy(convexFraxStrategy).setLocalKeepCrvs(
-                keepCRV,
-                keepCVX,
-                keepFXS
-            );
-        }
-
-        // for frax pools, Convex-Frax is the most profitable strategy, but it can be illiquid. default 80%.
-        Vault(_vault).addStrategy(
-            convexFraxStrategy,
-            8_000,
-            0,
-            type(uint256).max,
-            0
-        );
     }
 }
