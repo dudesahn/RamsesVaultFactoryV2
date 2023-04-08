@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0
 pragma solidity ^0.8.15;
-pragma experimental ABIEncoderV2;
 
 enum VaultType {
     LEGACY,
@@ -96,7 +95,7 @@ interface IStrategy {
         uint256 _harvestProfitMinInUsdc,
         uint256 _harvestProfitMaxInUsdc,
         address _booster,
-        address _convexToken
+        address _convex_token
     ) external returns (address newStrategy);
 
     function cloneStrategyCurveBoosted(
@@ -192,14 +191,15 @@ contract BalancerGlobal {
 
     /// @notice Address of our Convex pool manager.
     /// @dev Used to add new pools to Convex.
-    address public convexPoolManager = 0xf843F61508Fc17543412DE55B10ED87f4C28DE50;
+    address public convexPoolManager =
+        0xf843F61508Fc17543412DE55B10ED87f4C28DE50;
 
     /// @notice Yearn's vault registry address.
     IRegistry public registry;
 
     /// @notice Address of Convex's deposit contract, aka booster.
     IBooster public booster =
-        IBooster(0x7818A1DA7BD1E64c199029E86Ba244a9798eEE10);
+        IBooster(0xA57b8d98dAE62B26Ec3bcC4a365338157060B234);
 
     /// @notice Address to use for vault governance.
     address public governance = 0xFEB4acf3df3cDEA7399794D0869ef76A6EfAff52;
@@ -214,13 +214,13 @@ contract BalancerGlobal {
     address public treasury = 0x93A62dA5a14C80f265DAbC077fCEE437B1a0Efde;
 
     /// @notice Address to use for strategy keepers.
-    address public keeper = 0x256e6a486075fbAdbB881516e9b6b507fd082B5D;
+    address public keeper = 0x0D26E894C2371AB6D20d99A65E991775e3b5CAd7;
 
     /// @notice Address to use for strategy health check.
     address public healthCheck = 0xDDCea799fF1699e98EDF118e0629A974Df7DF012;
 
     /// @notice Address to use for strategy trade factory.
-    address public tradeFactory = 0xd6a8ae62f4d593DAf72E2D7c9f7bDB89AB069F06;
+    address public tradeFactory = 0xcADBA199F3AC26F67f660C89d43eB1820b7f7a3b;
 
     /// @notice Address to use for our network's base fee oracle.
     address public baseFeeOracle = 0x1E7eFAbF282614Aa2543EDaA50517ef5a23c868b;
@@ -237,7 +237,7 @@ contract BalancerGlobal {
     uint256 public keepCRV;
 
     /// @notice The address of our Curve voter. This is where we send any keepCRV.
-    address public curveVoter;
+    address public curveVoter = 0xBA11E7024cbEB1dd2B401C70A83E0d964144686C;
 
     /// @notice The percentage of CVX we re-lock (in basis points). Default is 0%.
     uint256 public keepCVX;
@@ -638,11 +638,7 @@ contract BalancerGlobal {
         string memory _symbol
     )
         external
-        returns (
-            address vault,
-            address convexStrategy,
-            address curveStrategy
-        )
+        returns (address vault, address convexStrategy, address curveStrategy)
     {
         if (!(msg.sender == owner || msg.sender == management)) {
             revert();
@@ -662,11 +658,7 @@ contract BalancerGlobal {
         address _gauge
     )
         external
-        returns (
-            address vault,
-            address convexStrategy,
-            address curveStrategy
-        )
+        returns (address vault, address convexStrategy, address curveStrategy)
     {
         return
             _createNewVaultsAndStrategies(_gauge, false, "default", "default");
@@ -680,11 +672,7 @@ contract BalancerGlobal {
         string memory _symbol
     )
         internal
-        returns (
-            address vault,
-            address convexStrategy,
-            address curveStrategy
-        )
+        returns (address vault, address convexStrategy, address curveStrategy)
     {
         // if a legacy vault already exists, only permissioned users can deploy another
         if (!_permissionedUser) {
@@ -725,11 +713,7 @@ contract BalancerGlobal {
         _setupVaultParams(vault);
 
         // setup our strategies as needed
-        (convexStrategy, curveStrategy) = _setupStrategies(
-            vault,
-            _gauge,
-            pid
-        );
+        (convexStrategy, curveStrategy) = _setupStrategies(vault, _gauge, pid);
 
         emit NewAutomatedVault(
             CATEGORY,
@@ -812,14 +796,8 @@ contract BalancerGlobal {
         address _vault,
         address _gauge,
         uint256 _pid
-    )
-        internal
-        returns (
-            address convexStrategy,
-            address curveStrategy
-        )
-    {
-        // we know we want convex and curve boosted strategies
+    ) internal returns (address convexStrategy, address curveStrategy) {
+        // we know we want convex and maybe curve boosted strategies
         convexStrategy = _addConvexStrategy(_vault, _pid);
         if (curveStratImplementation != address(0)) {
             curveStrategy = _addCurveStrategy(_vault, _gauge);
@@ -857,14 +835,19 @@ contract BalancerGlobal {
 
         // convex debtRatio can always start at 10_000
         uint256 convexDebtRatio = 10_000;
-        Vault(_vault).addStrategy(convexStrategy, convexDebtRatio, 0, type(uint256).max, 0);
+        Vault(_vault).addStrategy(
+            convexStrategy,
+            convexDebtRatio,
+            0,
+            type(uint256).max,
+            0
+        );
     }
 
     // deploy and attach a new curve boosted strategy using our factory's existing implementation
     function _addCurveStrategy(
         address _vault,
-        address _gauge,
-        bool _hasFraxPool
+        address _gauge
     ) internal returns (address curveStrategy) {
         // pull our strategyProxy from our voter
         IProxy proxy = IProxy(getProxy());

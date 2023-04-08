@@ -1,19 +1,19 @@
 import pytest
-import brownie
-from brownie import config, Wei, Contract, ZERO_ADDRESS
-from brownie import network
-import time, re, json, requests
-import web3
-from web3 import HTTPProvider
+from brownie import config, Contract, ZERO_ADDRESS, chain, interface, accounts
+from eth_abi import encode_single
+import requests
 
-# Snapshots the chain before each test and reverts after test completion.
-@pytest.fixture(autouse=True)
-def isolation(fn_isolation):
+
+@pytest.fixture(scope="function", autouse=True)
+def isolate(fn_isolation):
     pass
 
 
 # set this for if we want to use tenderly or not; mostly helpful because with brownie.reverts fails in tenderly forks.
 use_tenderly = False
+
+# use this to set what chain we use. 1 for ETH, 250 for fantom, 10 optimism, 42161 arbitrum
+chain_used = 1
 
 
 ################################################## TENDERLY DEBUGGING ##################################################
@@ -34,91 +34,42 @@ def tenderly_fork(web3, chain):
 
 ################################################ UPDATE THINGS BELOW HERE ################################################
 
+#################### FIXTURES BELOW NEED TO BE ADJUSTED FOR THIS REPO ####################
+
+# for curve/balancer, we will pull this automatically, so comment this out here (token below in unique fixtures section)
+# @pytest.fixture(scope="session")
+# def token():
+#     token_address = "0x6DEA81C8171D0bA574754EF6F8b412F2Ed88c54D"  # this should be the address of the ERC-20 used by the strategy/vault ()
+#     yield interface.IERC20(token_address)
+
 
 @pytest.fixture(scope="session")
-def tests_using_tenderly():
-    yes_or_no = use_tenderly
-    yield yes_or_no
-
-
-# use this to set what chain we use. 1 for ETH, 250 for fantom
-chain_used = 1
-
-
-# put our test pool's convex pid here
-# if you change this, make sure to update addresses/values below too
-@pytest.fixture(scope="session")
-def pid():
-    pid = 100  # 100 FRAX-USDC (do for frax), 25 stETH
-    yield pid
-
-
-# put our pool's frax pid here
-@pytest.fixture(scope="session")
-def frax_pid():
-    frax_pid = 9  # 27 DOLA-FRAXBP, 9 FRAX-USDC
-    yield frax_pid
-
-
-# put our pool's staking address here
-@pytest.fixture(scope="session")
-def staking_address():
-    staking_address = "0x963f487796d54d2f27bA6F3Fbe91154cA103b199"  # 0x963f487796d54d2f27bA6F3Fbe91154cA103b199 FRAX-USDC, 0xE7211E87D60177575846936F2123b5FA6f0ce8Ab DOLA-FRAXBP
-    yield staking_address
-
-
-# put our test pool's convex pid here
-@pytest.fixture(scope="session")
-def test_pid():
-    test_pid = 115  # 115 DOLA FRAXBP, 100 FRAX-USDC
-    yield test_pid
-
-
-# put our pool's frax pid here
-@pytest.fixture(scope="session")
-def test_frax_pid():
-    test_frax_pid = 27  # 27 DOLA-FRAXBP, 9 FRAX-USDC
-    yield test_frax_pid
-
-
-# put our pool's staking address here
-@pytest.fixture(scope="session")
-def test_staking_address():
-    test_staking_address = "0xE7211E87D60177575846936F2123b5FA6f0ce8Ab"  # 0x963f487796d54d2f27bA6F3Fbe91154cA103b199 FRAX-USDC, 0xE7211E87D60177575846936F2123b5FA6f0ce8Ab DOLA-FRAXBP
-    yield test_staking_address
-
-
-# put our pool's convex pid here
-@pytest.fixture(scope="session")
-def which_strategy():
-    # must be 0, 1, or 2 for convex, curve, and frax. Only test 2 (Frax) for pools that actually have frax.
-    which_strategy = 0
-    yield which_strategy
+def whale(amount, token):
+    # Totally in it for the tech
+    # Update this with a large holder of your want token (the largest EOA holder of LP)
+    whale = accounts.at(
+        "0x79eF6103A513951a3b25743DB509E267685726B7", force=True
+    )  # 0x79eF6103A513951a3b25743DB509E267685726B7, rETH gauge, fine to use with convex, 40k tokens
+    if token.balanceOf(whale) < 2 * amount:
+        raise ValueError(
+            "Our whale needs more funds. Find another whale or reduce your amount variable."
+        )
+    yield whale
 
 
 # this is the amount of funds we have our whale deposit. adjust this as needed based on their wallet balance
 @pytest.fixture(scope="session")
-def amount():
-    amount = 500_000e18  # 500k for FRAX-USDC, 300 for stETH
+def amount(token):
+    amount = 10 * 10 ** token.decimals()  # 10 for rETH
     yield amount
 
 
-# this is the amount of funds we have our whale deposit. adjust this as needed based on their wallet balance
 @pytest.fixture(scope="session")
-def profit_amount():
-    profit_amount = 2_500e18  # 2.5k for FRAX-USDC, 2 for stETH
-    yield profit_amount
-
-
-@pytest.fixture(scope="session")
-def profit_whale(accounts, profit_amount, token):
-    # Totally in it for the tech
-    # Update this with a large holder of your want token (the largest EOA holder of LP)
-    # use the FRAX-USDC pool for now
+def profit_whale(profit_amount, token):
     # ideally not the same whale as the main whale, or else they will lose money
     profit_whale = accounts.at(
-        "0x8fdb0bB9365a46B145Db80D0B1C5C5e979C84190", force=True
-    )  # 0x8fdb0bB9365a46B145Db80D0B1C5C5e979C84190, BUSD pool, 17m tokens, stETH: 0xF31501905Bdb035119031510c724C4a4d67acA14, 500 tokens
+        "0xA169c91d692486b8C35E7E17De7D4be743920E37", force=True
+    )  # 0xA169c91d692486b8C35E7E17De7D4be743920E37, rETH pool, 10 tokens
     if token.balanceOf(profit_whale) < 5 * profit_amount:
         raise ValueError(
             "Our profit whale needs more funds. Find another whale or reduce your profit_amount variable."
@@ -127,18 +78,15 @@ def profit_whale(accounts, profit_amount, token):
 
 
 @pytest.fixture(scope="session")
-def whale(accounts, amount, token):
-    # Totally in it for the tech
-    # Update this with a large holder of your want token (the largest EOA holder of LP)
-    # use the FRAX-USDC pool for now
-    whale = accounts.at(
-        "0xE57180685E3348589E9521aa53Af0BCD497E884d", force=True
-    )  # 0xE57180685E3348589E9521aa53Af0BCD497E884d, DOLA pool, 23.6m tokens, stETH: 0x43378368D84D4bA00D1C8E97EC2E6016A82fC062, 730 tokens
-    if token.balanceOf(whale) < 2 * amount:
-        raise ValueError(
-            "Our whale needs more funds. Find another whale or reduce your amount variable."
-        )
-    yield whale
+def profit_amount(token):
+    profit_amount = 0.1 * 10 ** token.decimals()  # 0.1 for rETH
+    yield profit_amount
+
+
+@pytest.fixture(scope="session")
+def to_sweep():
+    # token we can sweep out of strategy (use CRV)
+    yield interface.IERC20("0xD533a949740bb3306d119CC777fa900bA034cd52")
 
 
 # set address if already deployed, use ZERO_ADDRESS if not
@@ -148,18 +96,272 @@ def vault_address():
     yield vault_address
 
 
-# curve deposit pool for old pools, set to ZERO_ADDRESS otherwise
+# if our vault is pre-0.4.3, this will affect a few things
 @pytest.fixture(scope="session")
-def old_pool():
-    old_pool = ZERO_ADDRESS
-    yield old_pool
+def old_vault():
+    old_vault = False
+    yield old_vault
 
 
 # this is the name we want to give our strategy
 @pytest.fixture(scope="session")
 def strategy_name():
-    strategy_name = "StrategyConvexFRAX-USDC"
+    strategy_name = "StrategyAurarETH"
     yield strategy_name
+
+
+# this is the name of our strategy in the .sol file
+@pytest.fixture(scope="session")
+def contract_name(StrategyConvexFactoryClonable):
+    contract_name = StrategyConvexFactoryClonable
+    yield contract_name
+
+
+# if our strategy is using ySwaps, then we need to donate profit to it from our profit whale
+@pytest.fixture(scope="session")
+def use_yswaps():
+    use_yswaps = True
+    yield use_yswaps
+
+
+# whether or not a strategy is clonable. if true, don't forget to update what our cloning function is called in test_cloning.py
+@pytest.fixture(scope="session")
+def is_clonable():
+    is_clonable = True
+    yield is_clonable
+
+
+# use this to test our strategy in case there are no profits
+@pytest.fixture(scope="session")
+def no_profit():
+    no_profit = False
+    yield no_profit
+
+
+# use this when we might lose a few wei on conversions between want and another deposit token (like router strategies)
+# generally this will always be true if no_profit is true, even for curve/convex since we can lose a wei converting
+@pytest.fixture(scope="session")
+def is_slippery(no_profit):
+    is_slippery = False  # set this to true or false as needed
+    if no_profit:
+        is_slippery = True
+    yield is_slippery
+
+
+# use this to set the standard amount of time we sleep between harvests.
+# generally 1 day, but can be less if dealing with smaller windows (oracles) or longer if we need to trigger weekly earnings.
+@pytest.fixture(scope="session")
+def sleep_time():
+    hour = 3600
+
+    # change this one right here
+    hours_to_sleep = 24
+
+    sleep_time = hour * hours_to_sleep
+    yield sleep_time
+
+
+#################### FIXTURES ABOVE NEED TO BE ADJUSTED FOR THIS REPO ####################
+
+#################### FIXTURES BELOW SHOULDN'T NEED TO BE ADJUSTED FOR THIS REPO ####################
+
+
+@pytest.fixture(scope="session")
+def tests_using_tenderly():
+    yes_or_no = use_tenderly
+    yield yes_or_no
+
+
+# by default, pytest uses decimals, but in solidity we use uints, so 10 actually equals 10 wei (1e-17 for most assets, or 1e-6 for USDC/USDT)
+@pytest.fixture(scope="session")
+def RELATIVE_APPROX(token):
+    approx = 10
+    print("Approx:", approx, "wei")
+    yield approx
+
+
+# use this to set various fixtures that differ by chain
+if chain_used == 1:  # mainnet
+
+    @pytest.fixture(scope="session")
+    def gov():
+        yield accounts.at("0xFEB4acf3df3cDEA7399794D0869ef76A6EfAff52", force=True)
+
+    @pytest.fixture(scope="session")
+    def health_check():
+        yield interface.IHealthCheck("0xddcea799ff1699e98edf118e0629a974df7df012")
+
+    @pytest.fixture(scope="session")
+    def base_fee_oracle():
+        yield interface.IBaseFeeOracle("0xfeCA6895DcF50d6350ad0b5A8232CF657C316dA7")
+
+    # set all of the following to SMS, just simpler
+    @pytest.fixture(scope="session")
+    def management():
+        yield accounts.at("0x16388463d60FFE0661Cf7F1f31a7D658aC790ff7", force=True)
+
+    @pytest.fixture(scope="session")
+    def rewards(management):
+        yield management
+
+    @pytest.fixture(scope="session")
+    def guardian(management):
+        yield management
+
+    @pytest.fixture(scope="session")
+    def strategist(management):
+        yield management
+
+    @pytest.fixture(scope="session")
+    def keeper(management):
+        yield management
+
+    @pytest.fixture(scope="session")
+    def trade_factory():
+        yield Contract("0xcADBA199F3AC26F67f660C89d43eB1820b7f7a3b")
+
+    @pytest.fixture(scope="session")
+    def keeper_wrapper():
+        yield Contract("0x0D26E894C2371AB6D20d99A65E991775e3b5CAd7")
+
+
+@pytest.fixture(scope="module")
+def vault(pm, gov, rewards, guardian, management, token, vault_address):
+    if vault_address == ZERO_ADDRESS:
+        Vault = pm(config["dependencies"][0]).Vault
+        vault = guardian.deploy(Vault)
+        vault.initialize(token, gov, rewards, "", "", guardian)
+        vault.setDepositLimit(2 ** 256 - 1, {"from": gov})
+        vault.setManagement(management, {"from": gov})
+    else:
+        vault = interface.IVaultFactory045(vault_address)
+    yield vault
+
+
+#################### FIXTURES ABOVE SHOULDN'T NEED TO BE ADJUSTED FOR THIS REPO ####################
+
+#################### FIXTURES BELOW LIKELY NEED TO BE ADJUSTED FOR THIS REPO ####################
+
+
+# replace the first value with the name of your strategy
+@pytest.fixture(scope="module")
+def strategy(
+    strategist,
+    keeper,
+    vault,
+    gov,
+    management,
+    health_check,
+    contract_name,
+    strategy_name,
+    base_fee_oracle,
+    vault_address,
+    trade_factory,
+    which_strategy,
+    pid,
+    gauge,
+    new_proxy,
+    voter,
+    convex_token,
+    booster,
+    has_rewards,
+    rewards_token,
+):
+
+    if which_strategy == 0:  # convex
+        strategy = gov.deploy(
+            contract_name,
+            vault,
+            trade_factory,
+            pid,
+            10_000 * 1e6,
+            25_000 * 1e6,
+            booster,
+            convex_token,
+        )
+    elif which_strategy == 1:  # curve
+        strategy = gov.deploy(
+            contract_name,
+            vault,
+            trade_factory,
+            new_proxy,
+            gauge,
+        )
+        voter.setStrategy(new_proxy.address, {"from": gov})
+        print("New Strategy Proxy setup")
+
+    strategy.setKeeper(keeper, {"from": gov})
+
+    # set our management fee to zero so it doesn't mess with our profit checking
+    vault.setManagementFee(0, {"from": gov})
+    vault.setPerformanceFee(0, {"from": gov})
+
+    # we will be migrating on our live vault instead of adding it directly
+    if which_strategy == 0:  # convex
+        # earmark rewards if we are using a convex strategy
+        booster.earmarkRewards(pid, {"from": gov})
+        chain.sleep(1)
+        chain.mine(1)
+
+        vault.addStrategy(strategy, 10_000, 0, 2 ** 256 - 1, 0, {"from": gov})
+        print("New Vault, Convex Strategy")
+        chain.sleep(1)
+        chain.mine(1)
+
+        # this is the same for new or existing vaults
+        strategy.setHarvestTriggerParams(
+            90000e6, 150000e6, strategy.checkEarmark(), {"from": gov}
+        )
+    elif which_strategy == 1:  # Curve
+        vault.addStrategy(strategy, 10_000, 0, 2 ** 256 - 1, 0, {"from": gov})
+        print("New Vault, Curve Strategy")
+        chain.sleep(1)
+        chain.mine(1)
+
+        # approve reward token on our strategy proxy if needed
+        if has_rewards:
+            # first, add our rewards token to our strategy, then use that for our strategy proxy
+            strategy.updateRewards([rewards_token], {"from": gov})
+            new_proxy.approveRewardToken(strategy.rewardsTokens(0), {"from": gov})
+
+        # approve our new strategy on the proxy
+        new_proxy.approveStrategy(strategy.gauge(), strategy, {"from": gov})
+        assert new_proxy.strategies(gauge.address) == strategy.address
+        assert voter.strategy() == new_proxy.address
+
+    # turn our oracle into testing mode by setting the provider to 0x00, then forcing true
+    strategy.setBaseFeeOracle(base_fee_oracle, {"from": management})
+    base_fee_oracle.setBaseFeeProvider(ZERO_ADDRESS, {"from": management})
+    base_fee_oracle.setManualBaseFeeBool(True, {"from": management})
+    assert strategy.isBaseFeeAcceptable() == True
+
+    yield strategy
+
+
+#################### FIXTURES ABOVE LIKELY NEED TO BE ADJUSTED FOR THIS REPO ####################
+
+####################         PUT UNIQUE FIXTURES FOR THIS REPO BELOW         ####################
+
+# put our test pool's convex pid here
+# if you change this, make sure to update addresses/values below too
+@pytest.fixture(scope="session")
+def pid():
+    pid = 15  # 15 rETH-WETH
+    yield pid
+
+
+# put our test pool's convex pid here
+@pytest.fixture(scope="session")
+def test_pid():
+    test_pid = 2  # 2 bbUSD
+    yield test_pid
+
+
+# must be 0, 1, or 2 for convex, curve, and frax. Only test 2 (Frax) for pools that actually have frax (not balancer).
+@pytest.fixture(scope="session")
+def which_strategy():
+    which_strategy = 0
+    yield which_strategy
 
 
 # this is the address of our rewards token
@@ -201,13 +403,6 @@ def rewards_amount():
     yield rewards_amount
 
 
-# whether or not a strategy is clonable. if true, don't forget to update what our cloning function is called in test_cloning.py
-@pytest.fixture(scope="session")
-def is_clonable():
-    is_clonable = True
-    yield is_clonable
-
-
 # whether or not a strategy has ever had rewards, even if they are zero currently. essentially checking if the infra is there for rewards.
 @pytest.fixture(scope="session")
 def rewards_template():
@@ -229,522 +424,172 @@ def gauge_is_not_tokenized():
     yield gauge_is_not_tokenized
 
 
-# use this to test our strategy in case there are no profits
+########## ADDRESSES TO UPDATE FOR BALANCER VS CURVE ##########
+
+# all contracts below should be able to stay static based on the pid
 @pytest.fixture(scope="session")
-def no_profit():
-    no_profit = False
-    yield no_profit
+def booster():  # this is the deposit contract
+    yield Contract("0xA57b8d98dAE62B26Ec3bcC4a365338157060B234")
 
 
-# use this when we might lose a few wei on conversions between want and another deposit token
-# generally this will always be true if no_profit is true, even for curve/convex since we can lose a wei converting
+# balancer voter!
 @pytest.fixture(scope="session")
-def is_slippery(no_profit):
-    is_slippery = False
-    if no_profit:
-        is_slippery = True
-    yield is_slippery
+def voter():
+    yield Contract("0xBA11E7024cbEB1dd2B401C70A83E0d964144686C")
 
 
-# use this to set the standard amount of time we sleep between harvests.
-# generally 1 day, but can be less if dealing with smaller windows (oracles) or longer if we need to trigger weekly earnings.
 @pytest.fixture(scope="session")
-def sleep_time():
-    hour = 3600
-
-    # change this one right here
-    hours_to_sleep = 24
-
-    sleep_time = hour * hours_to_sleep
-    yield sleep_time
+def convex_token():
+    yield Contract("0xC0c293ce456fF0ED870ADd98a0828Dd4d2903DBF")
 
 
-################################################ UPDATE THINGS ABOVE HERE ################################################
+@pytest.fixture(scope="session")
+def crv():
+    yield Contract("0xba100000625a3754423978a60c9317c58a424e3D")
 
-# Only worry about changing things above this line, unless you want to make changes to the vault or strategy.
-# ----------------------------------------------------------------------- #
 
-if chain_used == 1:  # mainnet
+@pytest.fixture(scope="session")
+def fxs():
+    yield Contract("0x3432B6A60D23Ca0dFCa7761B7ab56459D9C964D0")
 
-    ########################################## FACTORY TESTING CONTRACTS BELOW ##########################################
 
-    @pytest.fixture(scope="module")
-    def live_spell_strat(trade_factory, ymechs_safe):
-        strategy = Contract("0xeDB4B647524FC2B9985019190551b197c6AB6C5c")
-        trade_factory.grantRole(
-            trade_factory.STRATEGY(), strategy, {"from": ymechs_safe}
-        )
-        yield strategy
+@pytest.fixture(scope="session")
+def crv_whale():
+    yield accounts.at("0x740a4AEEfb44484853AA96aB12545FC0290805F3", force=True)
 
-    @pytest.fixture(scope="module")
-    def live_yfi_strat(trade_factory, ymechs_safe):
-        network.gas_limit(6_000_000)
-        # network.gas_price(0)
-        # network.max_fee(0)
-        # network.priority_fee(0)
-        # , "allow_revert": True
-        strategy = Contract("0xa04947059831783C561e59A43B93dCB5bEE7cab2")
 
-        trade_factory.grantRole(
-            trade_factory.STRATEGY(), strategy, {"from": ymechs_safe}
-        )
-        yield strategy
+@pytest.fixture(scope="session")
+def test_vault():  # bb-USD
+    yield Contract("0xc5F3D11580c41cD07104e9AF154Fc6428bb93c73")
 
-    @pytest.fixture(scope="session")
-    def dai():
-        yield Contract("0x6B175474E89094C44Da98b954EedeAC495271d0F")
 
-    @pytest.fixture(scope="session")
-    def weth(interface):
-        yield interface.ERC20("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
+@pytest.fixture(scope="session")
+def test_gauge():  # bb-USD
+    yield Contract("0xa6325e799d266632D347e41265a69aF111b05403")
 
-    @pytest.fixture(scope="session")
-    def uniswap_router(Contract):
-        yield Contract("0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D")
 
-    @pytest.fixture(scope="session")
-    def fxs(Contract):
-        yield Contract("0x3432B6A60D23Ca0dFCa7761B7ab56459D9C964D0")
+@pytest.fixture(scope="session")
+def fud_gauge():  # FIAT-USD
+    yield Contract("0xDD4Db3ff8A37FE418dB6FF34fC316655528B6bbC")
 
-    @pytest.fixture(scope="session")
-    def curve_zapper(Contract):
-        yield Contract("0xA79828DF1850E8a3A3064576f380D90aECDD3359")
 
-    @pytest.fixture(scope="session")
-    def trade_factory():
-        # yield Contract("0xBf26Ff7C7367ee7075443c4F95dEeeE77432614d")
-        yield Contract("0x99d8679bE15011dEAD893EB4F5df474a4e6a8b29")
+@pytest.fixture(scope="session")
+def fud_lp():  # FIAT-USD
+    yield Contract("0x178E029173417b1F9C8bC16DCeC6f697bC323746")
 
-    @pytest.fixture(scope="session")
-    def new_trade_factory():
-        # yield Contract("0xBf26Ff7C7367ee7075443c4F95dEeeE77432614d")
-        yield Contract("0xd6a8ae62f4d593DAf72E2D7c9f7bDB89AB069F06")
 
-    @pytest.fixture(scope="session")
-    def ymechs_safe():
-        yield Contract("0x2C01B4AD51a67E2d8F02208F54dF9aC4c0B778B6")
+@pytest.fixture(scope="session")
+def token(pid, booster):
+    # this should be the address of the ERC-20 used by the strategy/vault
+    token_address = booster.poolInfo(pid)[0]
+    yield Contract(token_address)
 
-    @pytest.fixture(scope="session")
-    def multicall_swapper(interface):
-        yield interface.MultiCallOptimizedSwapper(
-            # "0xceB202F25B50e8fAF212dE3CA6C53512C37a01D2"
-            "0xB2F65F254Ab636C96fb785cc9B4485cbeD39CDAA"
-        )
 
-    @pytest.fixture(scope="session")
-    def keeper_contract(KeeperWrapper):
-        yield KeeperWrapper.at("0x256e6a486075fbAdbB881516e9b6b507fd082B5D")
+@pytest.fixture(scope="session")
+def cvx_deposit(booster, pid):
+    # this should be the address of the convex deposit token
+    cvx_address = booster.poolInfo(pid)[1]
+    yield Contract(cvx_address)
 
-    @pytest.fixture(scope="session")
-    def other_gauge(Contract):
-        yield Contract("0xa9A9BC60fc80478059A83f516D5215185eeC2fc0")
 
-    @pytest.fixture(scope="session")
-    def ymechs_safe():
-        yield Contract("0x2C01B4AD51a67E2d8F02208F54dF9aC4c0B778B6")
+@pytest.fixture(scope="session")
+def rewards_contract(pid, booster):
+    rewards_contract = booster.poolInfo(pid)[3]
+    yield Contract(rewards_contract)
 
-    @pytest.fixture(scope="session")
-    def test_vault():  # DOLA-FRAXBP
-        yield Contract("0xd395DEC4F1733ff09b750D869eEfa7E0D37C3eE6")
 
-    @pytest.fixture(scope="session")
-    def test_gauge():  # DOLA-FRAXBP
-        yield Contract("0xBE266d68Ce3dDFAb366Bb866F4353B6FC42BA43c")
+# gauge for the curve pool
+@pytest.fixture(scope="session")
+def gauge(pid, booster):
+    gauge = booster.poolInfo(pid)[2]
+    yield Contract(gauge)
 
-    @pytest.fixture(scope="session")
-    def frax_booster():
-        yield Contract("0x569f5B842B5006eC17Be02B8b94510BA8e79FbCa")
 
-    @pytest.fixture(scope="session")
-    def steth_gauge():
-        yield Contract("0x182B723a58739a9c974cFDB385ceaDb237453c28")
-
-    @pytest.fixture(scope="session")
-    def steth_lp():
-        yield Contract("0x06325440D014e39736583c165C2963BA99fAf14E")
-
-    ########################################## FACTORY TESTING CONTRACTS ABOVE ##########################################
-
-    @pytest.fixture(scope="session")
-    def sushi_router():  # use this to check our allowances
-        yield Contract("0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F")
-
-    # all contracts below should be able to stay static based on the pid
-    @pytest.fixture(scope="session")
-    def booster():  # this is the deposit contract
-        yield Contract("0xF403C135812408BFbE8713b5A23a04b3D48AAE31")
-
-    @pytest.fixture(scope="session")
-    def voter():
-        yield Contract("0xF147b8125d2ef93FB6965Db97D6746952a133934")
-
-    @pytest.fixture(scope="session")
-    def convexToken():
-        yield Contract("0x4e3FBD56CD56c3e72c1403e103b45Db9da5B9D2B")
-
-    @pytest.fixture(scope="session")
-    def crv():
-        yield Contract("0xD533a949740bb3306d119CC777fa900bA034cd52")
-
-    @pytest.fixture(scope="session")
-    def other_vault_strategy():
-        yield Contract("0x8423590CD0343c4E18d35aA780DF50a5751bebae")
-
-    @pytest.fixture(scope="session")
-    def curve_registry():
-        yield Contract("0x90E00ACe148ca3b23Ac1bC8C240C2a7Dd9c2d7f5")
-
-    @pytest.fixture(scope="session")
-    def curve_cryptoswap_registry():
-        yield Contract("0x4AacF35761d06Aa7142B9326612A42A2b9170E33")
-
-    @pytest.fixture(scope="session")
-    def healthCheck():
-        yield Contract("0xDDCea799fF1699e98EDF118e0629A974Df7DF012")
-
-    @pytest.fixture(scope="session")
-    def farmed():
-        # this is the token that we are farming and selling for more of our want.
-        yield Contract("0xD533a949740bb3306d119CC777fa900bA034cd52")
-
-    @pytest.fixture(scope="session")
-    def token(pid, booster):
-        # this should be the address of the ERC-20 used by the strategy/vault
-        token_address = booster.poolInfo(pid)[0]
-        yield Contract(token_address)
-
-    @pytest.fixture(scope="session")
-    def cvxDeposit(booster, pid):
-        # this should be the address of the convex deposit token
-        cvx_address = booster.poolInfo(pid)[1]
-        yield Contract(cvx_address)
-
-    @pytest.fixture(scope="session")
-    def rewardsContract(pid, booster):
-        rewardsContract = booster.poolInfo(pid)[3]
-        yield Contract(rewardsContract)
-
-    # gauge for the curve pool
-    @pytest.fixture(scope="session")
-    def gauge(pid, booster):
-        gauge = booster.poolInfo(pid)[2]
-        yield Contract(gauge)
-
-    # curve deposit pool
-    @pytest.fixture(scope="session")
-    def pool(token, curve_registry, curve_cryptoswap_registry, old_pool):
-        if old_pool == ZERO_ADDRESS:
-            if curve_registry.get_pool_from_lp_token(token) == ZERO_ADDRESS:
-                if (
-                    curve_cryptoswap_registry.get_pool_from_lp_token(token)
-                    == ZERO_ADDRESS
-                ):
-                    poolContract = token
-                else:
-                    poolAddress = curve_cryptoswap_registry.get_pool_from_lp_token(
-                        token
-                    )
-                    poolContract = Contract(poolAddress)
-            else:
-                poolAddress = curve_registry.get_pool_from_lp_token(token)
-                poolContract = Contract(poolAddress)
-        else:
-            poolContract = Contract(old_pool)
-        yield poolContract
-
-    @pytest.fixture(scope="session")
-    def gasOracle():
-        yield Contract("0x1E7eFAbF282614Aa2543EDaA50517ef5a23c868b")
-
-    # Define any accounts in this section
-    # for live testing, governance is the strategist MS; we will update this before we endorse
-    # normal gov is ychad, 0xFEB4acf3df3cDEA7399794D0869ef76A6EfAff52
-    @pytest.fixture(scope="session")
-    def gov(accounts):
-        yield accounts.at("0xFEB4acf3df3cDEA7399794D0869ef76A6EfAff52", force=True)
-
-    @pytest.fixture(scope="session")
-    def strategist_ms(accounts):
-        # like governance, but better
-        yield accounts.at("0x16388463d60FFE0661Cf7F1f31a7D658aC790ff7", force=True)
-
-    # set all of these accounts to SMS as well, just for testing
-    @pytest.fixture(scope="session")
-    def keeper(accounts):
-        yield accounts.at("0x16388463d60FFE0661Cf7F1f31a7D658aC790ff7", force=True)
-
-    @pytest.fixture(scope="session")
-    def rewards(accounts):
-        yield accounts.at("0x16388463d60FFE0661Cf7F1f31a7D658aC790ff7", force=True)
-
-    @pytest.fixture(scope="session")
-    def guardian(accounts):
-        yield accounts.at("0x16388463d60FFE0661Cf7F1f31a7D658aC790ff7", force=True)
-
-    @pytest.fixture(scope="session")
-    def management(accounts):
-        yield accounts.at("0x16388463d60FFE0661Cf7F1f31a7D658aC790ff7", force=True)
-
-    @pytest.fixture(scope="session")
-    def strategist(accounts):
-        yield accounts.at("0x16388463d60FFE0661Cf7F1f31a7D658aC790ff7", force=True)
-
-    @pytest.fixture(scope="module")
-    def convex_template(
+@pytest.fixture(scope="module")
+def convex_template(
+    StrategyConvexFactoryClonable,
+    trade_factory,
+    test_vault,
+    gov,
+    booster,
+    convex_token,
+    test_pid,
+):
+    # deploy our convex template
+    convex_template = gov.deploy(
         StrategyConvexFactoryClonable,
-        new_trade_factory,
         test_vault,
-        strategist,
-        booster,
-        convexToken,
+        trade_factory,
         test_pid,
-    ):
-        # deploy our convex template
-        convex_template = strategist.deploy(
-            StrategyConvexFactoryClonable,
-            test_vault,
-            new_trade_factory,
-            test_pid,
-            10_000 * 1e6,
-            25_000 * 1e6,
-            booster,
-            convexToken,
-        )
-        print("\nConvex Template deployed:", convex_template)
+        10_000 * 1e6,
+        25_000 * 1e6,
+        booster,
+        convex_token,
+    )
+    print("\nConvex Template deployed:", convex_template)
 
-        yield convex_template
+    yield convex_template
 
-    @pytest.fixture(scope="module")
-    def curve_template(
+
+@pytest.fixture(scope="module")
+def curve_template(
+    StrategyCurveBoostedFactoryClonable,
+    trade_factory,
+    test_vault,
+    strategist,
+    test_gauge,
+    new_proxy,
+    gov,
+):
+    # deploy our curve template
+    curve_template = gov.deploy(
         StrategyCurveBoostedFactoryClonable,
-        new_trade_factory,
         test_vault,
-        strategist,
-        test_gauge,
+        trade_factory,
         new_proxy,
-    ):
-        # deploy our curve template
-        curve_template = strategist.deploy(
-            StrategyCurveBoostedFactoryClonable,
-            test_vault,
-            new_trade_factory,
-            new_proxy,
-            test_gauge,
-        )
-        print("Curve Template deployed:", curve_template)
+        test_gauge,
+    )
+    print("Curve Template deployed:", curve_template)
 
-        yield curve_template
+    yield curve_template
 
-    @pytest.fixture(scope="module")
-    def frax_template(
-        StrategyConvexFraxFactoryClonable,
-        new_trade_factory,
-        test_vault,
-        strategist,
-        frax_booster,
-        test_staking_address,
-        test_frax_pid,
-    ):
-        frax_template = strategist.deploy(
-            StrategyConvexFraxFactoryClonable,
-            test_vault,
-            new_trade_factory,
-            test_frax_pid,
-            test_staking_address,
-            10_000 * 1e6,
-            25_000 * 1e6,
-            frax_booster,
-        )
 
-        print("Frax Template deployed:", frax_template)
-        yield frax_template
-
-    @pytest.fixture(scope="module")
-    def curve_global(
-        CurveGlobal,
-        strategist,
+@pytest.fixture(scope="module")
+def curve_global(
+    BalancerGlobal,
+    new_registry,
+    gov,
+    convex_template,
+    curve_template,
+):
+    # deploy our factory
+    curve_global = gov.deploy(
+        BalancerGlobal,
         new_registry,
-        gov,
         convex_template,
         curve_template,
-        frax_template,
-    ):
-        # deploy our factory
-        curve_global = strategist.deploy(
-            CurveGlobal,
-            new_registry,
-            convex_template,
-            curve_template,
-            frax_template,
-            gov,
-        )
-
-        print("Curve factory deployed:", curve_global)
-        yield curve_global
-
-    @pytest.fixture(scope="module")
-    def new_proxy(StrategyProxy, gov):
-        # deploy our new strategy proxy
-        strategy_proxy = gov.deploy(StrategyProxy)
-
-        print("New Strategy Proxy deployed:", strategy_proxy)
-        yield strategy_proxy
-
-    @pytest.fixture(scope="module")
-    def new_registry(VaultRegistry, ReleaseRegistry, old_registry, gov, accounts):
-        # deploy our new release registry first
-        release_registry = gov.deploy(ReleaseRegistry)
-        print("New Release Registry deployed:", release_registry)
-
-        # deploy our new vault registry, point it to our old vault registry and release registry
-        new_registry = gov.deploy(VaultRegistry, release_registry, old_registry)
-        print("New Vault Registry deployed:", new_registry)
-
-        # before we deploy our first vault, we need to update to the latest release (0.4.5)
-        template_vault_045 = "0xBb1988ab99d4839Af8b6c94853B890307770E48B"
-        release_registry_owner = accounts.at(release_registry.owner(), force=True)
-        release_registry.newRelease(
-            template_vault_045, {"from": release_registry_owner}
-        )
-
-        yield new_registry
-
-    @pytest.fixture(scope="session")
-    def old_proxy():
-        yield Contract("0x4694507Ca1023194eA3Ca4428F99EDEd7Ab2b919")
-
-    @pytest.fixture(scope="session")
-    def old_registry():
-        yield Contract("0x50c1a2eA0a861A967D9d0FFE2AE4012c2E053804")
-
-    @pytest.fixture(scope="module")
-    def vault(pm, gov, rewards, guardian, management, token, chain, vault_address):
-        Vault = pm(config["dependencies"][0]).Vault
-        vault = guardian.deploy(Vault)
-        vault.initialize(token, gov, rewards, "", "", guardian)
-        vault.setDepositLimit(2**256 - 1, {"from": gov})
-        vault.setManagement(management, {"from": gov})
-        chain.sleep(1)
-        chain.mine(1)
-        yield vault
-
-    # replace the first value with the name of your strategy
-    @pytest.fixture(scope="module")
-    def strategy(
-        StrategyConvexFactoryClonable,
-        StrategyCurveBoostedFactoryClonable,
-        StrategyConvexFraxFactoryClonable,
-        strategist,
-        keeper,
         gov,
-        accounts,
-        token,
-        healthCheck,
-        chain,
-        pid,
-        gasOracle,
-        strategist_ms,
-        gauge,
-        which_strategy,
-        new_proxy,
-        voter,
-        new_trade_factory,
-        convexToken,
-        booster,
-        frax_booster,
-        frax_pid,
-        staking_address,
-        vault,
-        has_rewards,
-        rewards_token,
-    ):
+    )
 
-        if which_strategy == 0:  # convex
-            strategy = strategist.deploy(
-                StrategyConvexFactoryClonable,
-                vault,
-                new_trade_factory,
-                pid,
-                10_000 * 1e6,
-                25_000 * 1e6,
-                booster,
-                convexToken,
-            )
-        elif which_strategy == 1:  # curve
-            strategy = strategist.deploy(
-                StrategyCurveBoostedFactoryClonable,
-                vault,
-                new_trade_factory,
-                new_proxy,
-                gauge,
-            )
-            voter.setStrategy(new_proxy.address, {"from": gov})
-            print("New Strategy Proxy setup")
-        else:  # frax
-            strategy = strategist.deploy(
-                StrategyConvexFraxFactoryClonable,
-                vault,
-                new_trade_factory,
-                frax_pid,
-                staking_address,
-                10_000 * 1e6,
-                25_000 * 1e6,
-                frax_booster,
-            )
+    print("Balancer factory deployed:", curve_global)
+    yield curve_global
 
-        strategy.setKeeper(keeper, {"from": gov})
 
-        # set our management fee to zero so it doesn't mess with our profit checking
-        vault.setManagementFee(0, {"from": gov})
+@pytest.fixture(scope="module")
+def new_proxy(StrategyProxy, gov):
+    # deploy our new strategy proxy for our balancer voter
+    strategy_proxy = gov.deploy(StrategyProxy)
 
-        # we will be migrating on our live vault instead of adding it directly
-        if which_strategy == 0:  # convex
-            # earmark rewards if we are using a convex strategy
-            booster.earmarkRewards(pid, {"from": gov})
-            chain.sleep(1)
-            chain.mine(1)
+    print("New Strategy Proxy deployed:", strategy_proxy)
+    yield strategy_proxy
 
-            vault.addStrategy(strategy, 10_000, 0, 2**256 - 1, 1_000, {"from": gov})
-            print("New Vault, Convex Strategy")
-            chain.sleep(1)
-            chain.mine(1)
 
-            # this is the same for new or existing vaults
-            strategy.setHarvestTriggerParams(90000e6, 150000e6, False, {"from": gov})
-        elif which_strategy == 1:  # Curve
-            vault.addStrategy(strategy, 10_000, 0, 2**256 - 1, 1_000, {"from": gov})
-            print("New Vault, Curve Strategy")
-            chain.sleep(1)
-            chain.mine(1)
+@pytest.fixture(scope="session")
+def new_registry(VaultRegistry):
+    yield VaultRegistry.at("0xaF1f5e1c19cB68B30aAD73846eFfDf78a5863319")
 
-            # approve reward token on our strategy proxy if needed
-            if has_rewards:
-                # first, add our rewards token to our strategy, then use that for our strategy proxy
-                strategy.updateRewards([rewards_token], {"from": gov})
-                new_proxy.approveRewardToken(strategy.rewardsTokens(0), {"from": gov})
 
-            # approve our new strategy on the proxy
-            new_proxy.approveStrategy(strategy.gauge(), strategy, {"from": gov})
-            assert new_proxy.strategies(gauge.address) == strategy.address
-            assert voter.strategy() == new_proxy.address
-        else:  # frax
-            vault.addStrategy(strategy, 10_000, 0, 2**256 - 1, 1_000, {"from": gov})
-            print("New Vault, Frax Strategy")
-            chain.sleep(1)
-            chain.mine(1)
-
-            # this is the same for new or existing vaults
-            strategy.setHarvestTriggerParams(90000e6, 150000e6, {"from": gov})
-
-        # turn our oracle into testing mode by setting the provider to 0x00, should default to true
-        strategy.setBaseFeeOracle(gasOracle, {"from": strategist_ms})
-        gasOracle = Contract(strategy.baseFeeOracle())
-        oracle_gov = accounts.at(gasOracle.governance(), force=True)
-        gasOracle.setBaseFeeProvider(ZERO_ADDRESS, {"from": oracle_gov})
-        strategy.setHealthCheck(healthCheck, {"from": gov})
-        assert strategy.isBaseFeeAcceptable() == True
-
-        # set up custom params and setters
-        strategy.setMaxReportDelay(86400 * 21, {"from": gov})
-
-        yield strategy
+@pytest.fixture(scope="session")
+def destination_strategy():
+    # destination strategy of the route
+    yield interface.ICurveStrategy045("0x83D0458e627cFD7C6d0da12a1223bd168e1c8B64")
