@@ -352,9 +352,9 @@ def pid():
 
 # put our test pool's convex pid here
 @pytest.fixture(scope="session")
-def test_pid():
-    test_pid = 2  # 2 bbUSD
-    yield test_pid
+def template_pid():
+    template_pid = 2  # 2 bbUSD
+    yield template_pid
 
 
 # must be 0, 1, or 2 for convex, curve, and frax. Only test 2 (Frax) for pools that actually have frax (not balancer).
@@ -459,12 +459,12 @@ def crv_whale():
 
 
 @pytest.fixture(scope="session")
-def test_vault():  # bb-USD
+def template_vault():  # bb-USD
     yield Contract("0xc5F3D11580c41cD07104e9AF154Fc6428bb93c73")
 
 
 @pytest.fixture(scope="session")
-def test_gauge():  # bb-USD
+def template_gauge():  # bb-USD
     yield Contract("0xa6325e799d266632D347e41265a69aF111b05403")
 
 
@@ -509,18 +509,18 @@ def gauge(pid, booster):
 def convex_template(
     StrategyConvexFactoryClonable,
     trade_factory,
-    test_vault,
+    template_vault,
     gov,
     booster,
     convex_token,
-    test_pid,
+    template_pid,
 ):
     # deploy our convex template
     convex_template = gov.deploy(
         StrategyConvexFactoryClonable,
-        test_vault,
+        template_vault,
         trade_factory,
-        test_pid,
+        template_pid,
         10_000 * 1e6,
         25_000 * 1e6,
         booster,
@@ -535,19 +535,19 @@ def convex_template(
 def curve_template(
     StrategyCurveBoostedFactoryClonable,
     trade_factory,
-    test_vault,
+    template_vault,
     strategist,
-    test_gauge,
+    template_gauge,
     new_proxy,
     gov,
 ):
     # deploy our curve template
     curve_template = gov.deploy(
         StrategyCurveBoostedFactoryClonable,
-        test_vault,
+        template_vault,
         trade_factory,
         new_proxy,
-        test_gauge,
+        template_gauge,
     )
     print("Curve Template deployed:", curve_template)
 
