@@ -111,7 +111,7 @@ def test_vault_deployment(
     # convex
     assert vault.withdrawalQueue(0) == cvx_strat
     assert vault.strategies(cvx_strat)["performanceFee"] == 0
-    assert convex_strategy.creditThreshold() == 1e24
+    assert convex_strategy.creditThreshold() == 5e22  # 50k
     assert convex_strategy.healthCheck() == curve_global.healthCheck()
     assert (
         convex_strategy.harvestProfitMaxInUsdc()
@@ -136,7 +136,7 @@ def test_vault_deployment(
         # curve
         assert vault.withdrawalQueue(1) == curve_strat
         assert vault.strategies(curve_strat)["performanceFee"] == 0
-        assert curve_strategy.creditThreshold() == 1e24
+        assert curve_strategy.creditThreshold() == 5e22
         assert curve_strategy.healthCheck() == curve_global.healthCheck()
         assert curve_strategy.localKeepCRV() == curve_global.keepCRV()
         assert curve_strategy.curveVoter() == curve_global.curveVoter()
@@ -157,7 +157,7 @@ def test_vault_deployment(
     assert curve_strategy.keeper() == keeper_wrapper
     ## deposit to the vault after approving
     startingWhale = token.balanceOf(whale)
-    token.approve(vault, 2 ** 256 - 1, {"from": whale})
+    token.approve(vault, 2**256 - 1, {"from": whale})
     vault.deposit(amount, {"from": whale})
 
     keeper_wrapper.harvest(convex_strategy, {"from": rando})
@@ -186,6 +186,186 @@ def test_vault_deployment(
 
 
 def test_permissioned_vault(
+    StrategyConvexFactoryClonable,
+    StrategyCurveBoostedFactoryClonable,
+    strategist,
+    curve_global,
+    gov,
+    guardian,
+    token,
+    health_check,
+    pid,
+    base_fee_oracle,
+    new_registry,
+    gauge,
+    new_proxy,
+    voter,
+    whale,
+    tests_using_tenderly,
+    fud_gauge,
+    random_gauge_not_on_convex,
+):
+    # deploying curve global with frax strategies doesn't work unless with tenderly;
+    # ganache crashes because of the try-catch in the fraxPid function
+    # however, I usually do hacky coverage testing (commenting out section in curveGlobal)
+
+    # once our factory is deployed, setup the factory from gov
+    registry_owner = accounts.at(new_registry.owner(), force=True)
+    new_registry.setApprovedVaultsOwner(curve_global, True, {"from": registry_owner})
+    new_registry.setVaultEndorsers(curve_global, True, {"from": registry_owner})
+
+    # make sure our curve global can own vaults and endorse them
+    assert new_registry.approvedVaultsOwner(curve_global)
+    assert new_registry.vaultEndorsers(curve_global)
+    assert curve_global.registry() == new_registry.address
+    print("Our factory can endorse vaults")
+
+    _pid = curve_global.getPid(gauge)
+    assert _pid == pid
+    print("\nOur pid workup works, pid:", pid)
+
+    # update the strategy on our voter
+    voter.setStrategy(new_proxy.address, {"from": gov})
+
+    # set our factory address on the strategy proxy
+    new_proxy.setFactory(curve_global.address, {"from": gov})
+    print("New proxy updated, factory added to proxy")
+    print("Let's deploy this vault")
+    print("Factory address: ", curve_global)
+    print("Gauge: ", gauge)
+
+    # check if our current gauge has a strategy for it, but mostly just do this to update our proxy
+    print(
+        "Here is our strategy for the gauge (likely 0x000):",
+        new_proxy.strategies(gauge),
+    )
+
+    # check if we can create this vault permissionlessly
+    print(
+        "Can we create this vault permissionlessly?",
+        curve_global.canCreateVaultPermissionlessly(gauge),
+    )
+
+    # turn on keeps
+    curve_global.setKeepCRV(69, curve_global.curveVoter(), {"from": gov})
+    curve_global.setKeepCVX(69, gov, {"from": gov})
+    print(
+        "Set our global keeps, don't mess with curve voter or we will revert on deploy"
+    )
+
+    # make sure not just anyone can create a permissioned vault
+    if not tests_using_tenderly:
+        with brownie.reverts():
+            curve_global.createNewVaultsAndStrategiesPermissioned(
+                gauge, "poop", "poop", {"from": whale}
+            )
+
+    # we can't create a vault for something that doesn't have a pid
+    if not tests_using_tenderly:
+        with brownie.reverts("No Aura PID"):
+            curve_global.createNewVaultsAndStrategiesPermissioned(
+                random_gauge_not_on_convex, "poop", "poop", {"from": gov}
+            )
+
+    tx = curve_global.createNewVaultsAndStrategiesPermissioned(
+        gauge, "stuff", "stuff", {"from": gov}
+    )
+    vault_address = tx.events["NewAutomatedVault"]["vault"]
+    vault = Contract(vault_address)
+    print("Vault name:", vault.name())
+
+    print("Vault endorsed:", vault_address)
+    info = tx.events["NewAutomatedVault"]
+
+    # check that everything is setup properly for our vault
+    assert vault.governance() == curve_global.address
+    assert vault.management() == curve_global.management()
+    assert vault.guardian() == curve_global.guardian()
+    assert vault.guardian() == curve_global.guardian()
+    assert vault.depositLimit() == curve_global.depositLimit()
+    assert vault.rewards() == curve_global.treasury()
+    assert vault.managementFee() == curve_global.managementFee()
+    assert vault.performanceFee() == curve_global.performanceFee()
+    print("Asserts good for our vault")
+
+    print("Here's our new vault created event:", info, "\n")
+
+    # convex
+    cvx_strat = tx.events["NewAutomatedVault"]["convexStrategy"]
+    convex_strategy = StrategyConvexFactoryClonable.at(cvx_strat)
+    print("Convex strategy:", cvx_strat)
+
+    assert vault.withdrawalQueue(0) == cvx_strat
+    assert vault.strategies(cvx_strat)["performanceFee"] == 0
+    assert convex_strategy.creditThreshold() == 5e22  # 50k
+    assert convex_strategy.healthCheck() == curve_global.healthCheck()
+    assert (
+        convex_strategy.harvestProfitMaxInUsdc()
+        == curve_global.harvestProfitMaxInUsdc()
+    )
+    assert (
+        convex_strategy.harvestProfitMinInUsdc()
+        == curve_global.harvestProfitMinInUsdc()
+    )
+    assert convex_strategy.healthCheck() == curve_global.healthCheck()
+    assert convex_strategy.localKeepCRV() == curve_global.keepCRV()
+    assert convex_strategy.localKeepCVX() == curve_global.keepCVX()
+    assert convex_strategy.curveVoter() == curve_global.curveVoter()
+    assert convex_strategy.convexVoter() == curve_global.convexVoter()
+    assert convex_strategy.rewards() == curve_global.treasury()
+    assert convex_strategy.strategist() == curve_global.management()
+    assert convex_strategy.keeper() == curve_global.keeper()
+    print("Asserts good for our convex strategy")
+
+    # curve
+    curve_strat = tx.events["NewAutomatedVault"]["curveStrategy"]
+    curve_strategy = StrategyCurveBoostedFactoryClonable.at(curve_strat)
+    print("Curve strategy:", curve_strat)
+
+    # curve
+    assert vault.withdrawalQueue(1) == curve_strat
+    assert vault.strategies(curve_strat)["performanceFee"] == 0
+    assert curve_strategy.creditThreshold() == 5e22
+    assert curve_strategy.healthCheck() == curve_global.healthCheck()
+    assert curve_strategy.localKeepCRV() == curve_global.keepCRV()
+    assert curve_strategy.curveVoter() == curve_global.curveVoter()
+    assert curve_strategy.rewards() == curve_global.treasury()
+    assert curve_strategy.strategist() == curve_global.management()
+    assert curve_strategy.keeper() == curve_global.keeper()
+    print("Asserts good for our curve strategy")
+
+    # daddy needs to accept gov on all new vaults
+    vault.acceptGovernance({"from": gov})
+    assert vault.governance() == gov.address
+    print("Gov accepted by daddy")
+
+    # deploy a FUD vault, should have convex and curve.
+    if pid != 36:
+        chain.sleep(1)
+        chain.mine(1)
+
+        # no keepCRV here to hit the other side of the if statement
+        curve_global.setKeepCRV(0, curve_global.curveVoter(), {"from": gov})
+
+        tx = curve_global.createNewVaultsAndStrategiesPermissioned(
+            fud_gauge,
+            "FUD Vault",
+            "yvCurve-FUD",
+            {"from": curve_global.management()},
+        )
+        print("New FUD vault deployed, vault/convex/curve", tx.return_value)
+        chain.sleep(1)
+        chain.mine(1)
+
+    if not tests_using_tenderly:
+        # we can't deploy another frax vault because we already have a strategy on our proxy for that gauge
+        with brownie.reverts():
+            tx = curve_global.createNewVaultsAndStrategiesPermissioned(
+                gauge, "test2", "test2", {"from": gov}
+            )
+
+
+def test_no_curve(
     StrategyConvexFactoryClonable,
     StrategyCurveBoostedFactoryClonable,
     strategist,
@@ -245,26 +425,16 @@ def test_permissioned_vault(
         curve_global.canCreateVaultPermissionlessly(gauge),
     )
 
-    # turn on keeps
-    curve_global.setKeepCRV(69, curve_global.curveVoter(), {"from": gov})
-    curve_global.setKeepCVX(69, gov, {"from": gov})
-    print(
-        "Set our global keeps, don't mess with curve voter or we will revert on deploy"
-    )
-
-    # make sure not just anyone can create a permissioned vault
-    if not tests_using_tenderly:
-        with brownie.reverts():
-            curve_global.createNewVaultsAndStrategiesPermissioned(
-                gauge, "poop", "poop", {"from": whale}
-            )
+    # set curve template to zero address
+    curve_global.setCurveStratImplementation(ZERO_ADDRESS, {"from": gov})
 
     tx = curve_global.createNewVaultsAndStrategiesPermissioned(
-        gauge, "stuff", "stuff", {"from": gov}
+        gauge, "stuff", "stuff", {"from": curve_global.management()}
     )
     vault_address = tx.events["NewAutomatedVault"]["vault"]
     vault = Contract(vault_address)
     print("Vault name:", vault.name())
+    assert vault.withdrawalQueue(1) == ZERO_ADDRESS
 
     print("Vault endorsed:", vault_address)
     info = tx.events["NewAutomatedVault"]
@@ -289,7 +459,7 @@ def test_permissioned_vault(
 
     assert vault.withdrawalQueue(0) == cvx_strat
     assert vault.strategies(cvx_strat)["performanceFee"] == 0
-    assert convex_strategy.creditThreshold() == 1e24
+    assert convex_strategy.creditThreshold() == 5e22  # 50k
     assert convex_strategy.healthCheck() == curve_global.healthCheck()
     assert (
         convex_strategy.harvestProfitMaxInUsdc()
@@ -302,46 +472,28 @@ def test_permissioned_vault(
     assert convex_strategy.healthCheck() == curve_global.healthCheck()
     assert convex_strategy.localKeepCRV() == curve_global.keepCRV()
     assert convex_strategy.localKeepCVX() == curve_global.keepCVX()
-    assert convex_strategy.curveVoter() == curve_global.curveVoter()
     assert convex_strategy.convexVoter() == curve_global.convexVoter()
     assert convex_strategy.rewards() == curve_global.treasury()
     assert convex_strategy.strategist() == curve_global.management()
     assert convex_strategy.keeper() == curve_global.keeper()
     print("Asserts good for our convex strategy")
 
-    # curve
-    curve_strat = tx.events["NewAutomatedVault"]["curveStrategy"]
-    curve_strategy = StrategyCurveBoostedFactoryClonable.at(curve_strat)
-    print("Curve strategy:", curve_strat)
-
-    # curve
-    assert vault.withdrawalQueue(1) == curve_strat
-    assert vault.strategies(curve_strat)["performanceFee"] == 0
-    assert curve_strategy.creditThreshold() == 1e24
-    assert curve_strategy.healthCheck() == curve_global.healthCheck()
-    assert curve_strategy.localKeepCRV() == curve_global.keepCRV()
-    assert curve_strategy.curveVoter() == curve_global.curveVoter()
-    assert curve_strategy.rewards() == curve_global.treasury()
-    assert curve_strategy.strategist() == curve_global.management()
-    assert curve_strategy.keeper() == curve_global.keeper()
-    print("Asserts good for our curve strategy")
-
     # daddy needs to accept gov on all new vaults
     vault.acceptGovernance({"from": gov})
     assert vault.governance() == gov.address
     print("Gov accepted by daddy")
 
-    # deploy a stETH vault, should have convex and curve. we have to call this for coverage though or else it will stall forever
-    if pid != 25:
+    # deploy a FUD vault, should have convex and curve.
+    if pid != 36:
         chain.sleep(1)
         chain.mine(1)
         tx = curve_global.createNewVaultsAndStrategiesPermissioned(
             fud_gauge,
-            "stETH Vault",
-            "yvCurve-stETH",
+            "FUD Vault",
+            "yvCurve-FUD",
             {"from": gov},
         )
-        print("New stETH vault deployed, vault/convex/curve/frax", tx)
+        print("New FUD vault deployed, vault/convex/curve", tx.return_value)
         chain.sleep(1)
         chain.mine(1)
 
@@ -381,13 +533,13 @@ def test_curve_global_setters_and_views(
     print("Time to check the views")
 
     # this one causes our coverage tests to crash, so make it call only
-    _pid = curve_global.getPid.call(gauge)
+    _pid = curve_global.getPid(gauge)
     assert _pid == pid
     print("PID is good")
 
     # trying to pull a PID for an address that doesn't have one should return max uint
-    fake_pid = curve_global.getPid.call(gov)
-    assert fake_pid == 2 ** 256 - 1
+    fake_pid = curve_global.getPid(gov)
+    assert fake_pid == 2**256 - 1
     print("Fake gauge gives max uint")
 
     # check our deployed vaults
@@ -516,6 +668,7 @@ def test_curve_global_setters_and_views(
     with brownie.reverts():
         curve_global.setBaseFeeOracle(gov, {"from": whale})
     curve_global.setBaseFeeOracle(gov, {"from": gov})
+    curve_global.setBaseFeeOracle(gov, {"from": curve_global.management()})
     assert curve_global.baseFeeOracle() == gov.address
 
     with brownie.reverts():

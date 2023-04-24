@@ -3,7 +3,7 @@ from brownie import config, Contract, ZERO_ADDRESS, chain, interface, accounts
 from eth_abi import encode_single
 import requests
 
-
+# Snapshots the chain before each test and reverts after test completion.
 @pytest.fixture(scope="function", autouse=True)
 def isolate(fn_isolation):
     pass
@@ -84,9 +84,9 @@ def profit_amount(token):
 
 
 @pytest.fixture(scope="session")
-def to_sweep():
+def to_sweep(crv):
     # token we can sweep out of strategy (use CRV)
-    yield interface.IERC20("0xD533a949740bb3306d119CC777fa900bA034cd52")
+    yield crv
 
 
 # set address if already deployed, use ZERO_ADDRESS if not
@@ -112,8 +112,15 @@ def strategy_name():
 
 # this is the name of our strategy in the .sol file
 @pytest.fixture(scope="session")
-def contract_name(StrategyConvexFactoryClonable):
-    contract_name = StrategyConvexFactoryClonable
+def contract_name(
+    StrategyConvexFactoryClonable,
+    StrategyCurveBoostedFactoryClonable,
+    which_strategy,
+):
+    if which_strategy == 0:
+        contract_name = StrategyConvexFactoryClonable
+    elif which_strategy == 1:
+        contract_name = StrategyCurveBoostedFactoryClonable
     yield contract_name
 
 
@@ -231,7 +238,7 @@ def vault(pm, gov, rewards, guardian, management, token, vault_address):
         Vault = pm(config["dependencies"][0]).Vault
         vault = guardian.deploy(Vault)
         vault.initialize(token, gov, rewards, "", "", guardian)
-        vault.setDepositLimit(2 ** 256 - 1, {"from": gov})
+        vault.setDepositLimit(2**256 - 1, {"from": gov})
         vault.setManagement(management, {"from": gov})
     else:
         vault = interface.IVaultFactory045(vault_address)
@@ -241,6 +248,18 @@ def vault(pm, gov, rewards, guardian, management, token, vault_address):
 #################### FIXTURES ABOVE SHOULDN'T NEED TO BE ADJUSTED FOR THIS REPO ####################
 
 #################### FIXTURES BELOW LIKELY NEED TO BE ADJUSTED FOR THIS REPO ####################
+
+
+@pytest.fixture(scope="session")
+def target(which_strategy):
+    # whatever we want it to be—this is passed into our harvest function as a target
+    yield which_strategy
+
+
+# this should be a strategy from a different vault to check during migration
+@pytest.fixture(scope="session")
+def other_strategy():
+    yield Contract("0x3bCa26c3D49Af712ac74Af82De27665A610999E2")
 
 
 # replace the first value with the name of your strategy
@@ -303,7 +322,7 @@ def strategy(
         chain.sleep(1)
         chain.mine(1)
 
-        vault.addStrategy(strategy, 10_000, 0, 2 ** 256 - 1, 0, {"from": gov})
+        vault.addStrategy(strategy, 10_000, 0, 2**256 - 1, 0, {"from": gov})
         print("New Vault, Convex Strategy")
         chain.sleep(1)
         chain.mine(1)
@@ -313,7 +332,7 @@ def strategy(
             90000e6, 150000e6, strategy.checkEarmark(), {"from": gov}
         )
     elif which_strategy == 1:  # Curve
-        vault.addStrategy(strategy, 10_000, 0, 2 ** 256 - 1, 0, {"from": gov})
+        vault.addStrategy(strategy, 10_000, 0, 2**256 - 1, 0, {"from": gov})
         print("New Vault, Curve Strategy")
         chain.sleep(1)
         chain.mine(1)
@@ -350,6 +369,20 @@ def pid():
     yield pid
 
 
+# put our pool's frax pid here
+@pytest.fixture(scope="session")
+def frax_pid():
+    frax_pid = 36  # 27 DOLA-FRAXBP, 9 FRAX-USDC, 36 frxETH-ETH
+    yield frax_pid
+
+
+# put our pool's staking address here
+@pytest.fixture(scope="session")
+def staking_address():
+    staking_address = "0xa537d64881b84faffb9Ae43c951EEbF368b71cdA"  #  0xa537d64881b84faffb9Ae43c951EEbF368b71cdA frxETH, 0x963f487796d54d2f27bA6F3Fbe91154cA103b199 FRAX-USDC, 0xE7211E87D60177575846936F2123b5FA6f0ce8Ab DOLA-FRAXBP
+    yield staking_address
+
+
 # put our test pool's convex pid here
 @pytest.fixture(scope="session")
 def template_pid():
@@ -357,11 +390,32 @@ def template_pid():
     yield template_pid
 
 
+# this is only used for deploying our template—should be for an existing vault
+@pytest.fixture(scope="session")
+def template_frax_pid():
+    template_frax_pid = 27  # 27 DOLA-FRAXBP, 9 FRAX-USDC
+    yield template_frax_pid
+
+
+# this is only used for deploying our template—should be for an existing vault
+@pytest.fixture(scope="session")
+def test_staking_address():
+    test_staking_address = "0xE7211E87D60177575846936F2123b5FA6f0ce8Ab"  # 0x963f487796d54d2f27bA6F3Fbe91154cA103b199 FRAX-USDC, 0xE7211E87D60177575846936F2123b5FA6f0ce8Ab DOLA-FRAXBP
+    yield test_staking_address
+
+
 # must be 0, 1, or 2 for convex, curve, and frax. Only test 2 (Frax) for pools that actually have frax (not balancer).
 @pytest.fixture(scope="session")
 def which_strategy():
     which_strategy = 0
     yield which_strategy
+
+
+# if our curve gauge deposits aren't tokenized (older pools), we can't as easily do some tests and we skip them
+@pytest.fixture(scope="session")
+def gauge_is_not_tokenized():
+    gauge_is_not_tokenized = False
+    yield gauge_is_not_tokenized
 
 
 # this is the address of our rewards token
@@ -417,19 +471,17 @@ def has_rewards():
     yield has_rewards
 
 
-# if our curve gauge deposits aren't tokenized (older pools), we can't as easily do some tests and we skip them
-@pytest.fixture(scope="session")
-def gauge_is_not_tokenized():
-    gauge_is_not_tokenized = False
-    yield gauge_is_not_tokenized
-
-
 ########## ADDRESSES TO UPDATE FOR BALANCER VS CURVE ##########
 
 # all contracts below should be able to stay static based on the pid
 @pytest.fixture(scope="session")
 def booster():  # this is the deposit contract
     yield Contract("0xA57b8d98dAE62B26Ec3bcC4a365338157060B234")
+
+
+@pytest.fixture(scope="session")
+def frax_booster():
+    yield Contract("0x569f5B842B5006eC17Be02B8b94510BA8e79FbCa")
 
 
 # balancer voter!
@@ -476,6 +528,11 @@ def fud_gauge():  # FIAT-USD
 @pytest.fixture(scope="session")
 def fud_lp():  # FIAT-USD
     yield Contract("0x178E029173417b1F9C8bC16DCeC6f697bC323746")
+
+
+@pytest.fixture(scope="session")
+def random_gauge_not_on_convex():  #
+    yield Contract("0x2D42910D826e5500579D121596E98A6eb33C0a1b")
 
 
 @pytest.fixture(scope="session")
@@ -587,9 +644,3 @@ def new_proxy(StrategyProxy, gov):
 @pytest.fixture(scope="session")
 def new_registry(VaultRegistry):
     yield VaultRegistry.at("0xaF1f5e1c19cB68B30aAD73846eFfDf78a5863319")
-
-
-@pytest.fixture(scope="session")
-def destination_strategy():
-    # destination strategy of the route
-    yield interface.ICurveStrategy045("0x83D0458e627cFD7C6d0da12a1223bd168e1c8B64")

@@ -22,13 +22,13 @@ def test_keep(
     no_profit,
     profit_whale,
     profit_amount,
-    destination_strategy,
+    target,
     use_yswaps,
     which_strategy,
     new_proxy,
 ):
     ## deposit to the vault after approving
-    token.approve(vault, 2 ** 256 - 1, {"from": whale})
+    token.approve(vault, 2**256 - 1, {"from": whale})
     vault.deposit(amount, {"from": whale})
 
     # harvest as-is before we have yield to hit all parts of our if statement
@@ -55,7 +55,7 @@ def test_keep(
         gov,
         profit_whale,
         profit_amount,
-        destination_strategy,
+        target,
     )
 
     # sleep to get some profit
@@ -73,7 +73,7 @@ def test_keep(
             gov,
             profit_whale,
             profit_amount,
-            destination_strategy,
+            target,
         )
 
         treasury_after = convex_token.balanceOf(strategy.convexVoter())
@@ -89,7 +89,7 @@ def test_keep(
             gov,
             profit_whale,
             profit_amount,
-            destination_strategy,
+            target,
         )
 
         treasury_after = crv.balanceOf(strategy.curveVoter())
@@ -105,7 +105,7 @@ def test_keep(
             gov,
             profit_whale,
             profit_amount,
-            destination_strategy,
+            target,
         )
 
         treasury_after = fxs.balanceOf(strategy.fraxVoter())
@@ -124,7 +124,7 @@ def test_keep(
             gov,
             profit_whale,
             profit_amount,
-            destination_strategy,
+            target,
         )
 
         treasury_after = convex_token.balanceOf(strategy.convexVoter())
@@ -140,7 +140,7 @@ def test_keep(
             gov,
             profit_whale,
             profit_amount,
-            destination_strategy,
+            target,
         )
 
         treasury_after = crv.balanceOf(strategy.curveVoter())
@@ -157,7 +157,7 @@ def test_keep(
             gov,
             profit_whale,
             profit_amount,
-            destination_strategy,
+            target,
         )
 
         treasury_after = fxs.balanceOf(strategy.fraxVoter())
@@ -175,7 +175,7 @@ def test_keep(
             gov,
             profit_whale,
             profit_amount,
-            destination_strategy,
+            target,
         )
 
     elif which_strategy == 1:
@@ -189,7 +189,7 @@ def test_keep(
             gov,
             profit_whale,
             profit_amount,
-            destination_strategy,
+            target,
         )
 
     else:
@@ -203,7 +203,7 @@ def test_keep(
             gov,
             profit_whale,
             profit_amount,
-            destination_strategy,
+            target,
         )
 
     # both off
@@ -217,7 +217,7 @@ def test_keep(
             gov,
             profit_whale,
             profit_amount,
-            destination_strategy,
+            target,
         )
 
     elif which_strategy == 1:
@@ -230,7 +230,7 @@ def test_keep(
             gov,
             profit_whale,
             profit_amount,
-            destination_strategy,
+            target,
         )
 
     else:
@@ -243,7 +243,7 @@ def test_keep(
             gov,
             profit_whale,
             profit_amount,
-            destination_strategy,
+            target,
         )
 
 
@@ -265,10 +265,11 @@ def test_proxy_rewards(
     no_profit,
     profit_whale,
     profit_amount,
-    destination_strategy,
+    target,
     use_yswaps,
     which_strategy,
     new_proxy,
+    has_rewards,
 ):
     # only do for curve strat
     if which_strategy != 1 or not has_rewards:
@@ -277,7 +278,7 @@ def test_proxy_rewards(
 
     ## deposit to the vault after approving
     startingWhale = token.balanceOf(whale)
-    token.approve(vault, 2 ** 256 - 1, {"from": whale})
+    token.approve(vault, 2**256 - 1, {"from": whale})
     vault.deposit(amount, {"from": whale})
     newWhale = token.balanceOf(whale)
 
@@ -289,7 +290,7 @@ def test_proxy_rewards(
         gov,
         profit_whale,
         profit_amount,
-        destination_strategy,
+        target,
     )
 
     # simulate profits
@@ -312,7 +313,7 @@ def test_proxy_rewards(
         gov,
         profit_whale,
         profit_amount,
-        destination_strategy,
+        target,
     )
     assert fxs.balanceOf(voter) == 0
 
@@ -349,13 +350,19 @@ def test_lower_keks(
     which_strategy,
     profit_amount,
     profit_whale,
+    use_yswaps,
+    trade_factory,
+    new_proxy,
+    convex_token,
+    frax_pid,
+    target,
 ):
     if which_strategy != 2:
         return
 
     ## deposit to the vault after approving
     startingWhale = token.balanceOf(whale)
-    token.approve(vault, 2 ** 256 - 1, {"from": whale})
+    token.approve(vault, 2**256 - 1, {"from": whale})
     vault.deposit(amount / 20, {"from": whale})
     newWhale = token.balanceOf(whale)
     (profit, loss) = harvest_strategy(
@@ -365,7 +372,7 @@ def test_lower_keks(
         gov,
         profit_whale,
         profit_amount,
-        destination_strategy,
+        target,
     )
 
     # deposit and harvest multiple separate times to increase our nextKek
@@ -378,7 +385,7 @@ def test_lower_keks(
         gov,
         profit_whale,
         profit_amount,
-        destination_strategy,
+        target,
     )
 
     # deposit and harvest multiple separate times to increase our nextKek
@@ -391,7 +398,7 @@ def test_lower_keks(
         gov,
         profit_whale,
         profit_amount,
-        destination_strategy,
+        target,
     )
 
     # deposit and harvest multiple separate times to increase our nextKek
@@ -404,7 +411,7 @@ def test_lower_keks(
         gov,
         profit_whale,
         profit_amount,
-        destination_strategy,
+        target,
     )
 
     # deposit and harvest multiple separate times to increase our nextKek
@@ -431,7 +438,7 @@ def test_lower_keks(
             gov,
             profit_whale,
             profit_amount,
-            destination_strategy,
+            target,
         )
 
     # sleep for 4 more days to fully unlock our first two keks
@@ -452,7 +459,7 @@ def test_lower_keks(
         gov,
         profit_whale,
         profit_amount,
-        destination_strategy,
+        target,
     )
 
     # deposit and harvest multiple separate times to increase our nextKek
@@ -465,7 +472,7 @@ def test_lower_keks(
         gov,
         profit_whale,
         profit_amount,
-        destination_strategy,
+        target,
     )
 
     # deposit and harvest multiple separate times to increase our nextKek
@@ -478,7 +485,7 @@ def test_lower_keks(
         gov,
         profit_whale,
         profit_amount,
-        destination_strategy,
+        target,
     )
 
     # deposit and harvest multiple separate times to increase our nextKek
@@ -491,7 +498,7 @@ def test_lower_keks(
         gov,
         profit_whale,
         profit_amount,
-        destination_strategy,
+        target,
     )
 
     locked = strategy.stillLockedStake() / 1e18
@@ -539,6 +546,12 @@ def test_lower_keks_part_two(
     which_strategy,
     profit_amount,
     profit_whale,
+    use_yswaps,
+    trade_factory,
+    new_proxy,
+    convex_token,
+    frax_pid,
+    target,
 ):
     if which_strategy != 2:
         return
@@ -548,7 +561,7 @@ def test_lower_keks_part_two(
 
     ## deposit to the vault after approving
     startingWhale = token.balanceOf(whale)
-    token.approve(vault, 2 ** 256 - 1, {"from": whale})
+    token.approve(vault, 2**256 - 1, {"from": whale})
     vault.deposit(amount / 20, {"from": whale})
     newWhale = token.balanceOf(whale)
     (profit, loss) = harvest_strategy(
@@ -558,7 +571,7 @@ def test_lower_keks_part_two(
         gov,
         profit_whale,
         profit_amount,
-        destination_strategy,
+        target,
     )
 
     # deposit and harvest multiple separate times to increase our nextKek
@@ -571,7 +584,7 @@ def test_lower_keks_part_two(
         gov,
         profit_whale,
         profit_amount,
-        destination_strategy,
+        target,
     )
 
     # deposit and harvest multiple separate times to increase our nextKek
@@ -584,7 +597,7 @@ def test_lower_keks_part_two(
         gov,
         profit_whale,
         profit_amount,
-        destination_strategy,
+        target,
     )
 
     # sleep since our 3 keks are full
@@ -600,7 +613,7 @@ def test_lower_keks_part_two(
         gov,
         profit_whale,
         profit_amount,
-        destination_strategy,
+        target,
     )
 
     # deposit and harvest multiple separate times to increase our nextKek
@@ -613,7 +626,7 @@ def test_lower_keks_part_two(
         gov,
         profit_whale,
         profit_amount,
-        destination_strategy,
+        target,
     )
 
     # sleep to free them all up
@@ -643,13 +656,19 @@ def test_increase_keks(
     which_strategy,
     profit_amount,
     profit_whale,
+    use_yswaps,
+    trade_factory,
+    new_proxy,
+    convex_token,
+    frax_pid,
+    target,
 ):
     if which_strategy != 2:
         return
 
     ## deposit to the vault after approving
     startingWhale = token.balanceOf(whale)
-    token.approve(vault, 2 ** 256 - 1, {"from": whale})
+    token.approve(vault, 2**256 - 1, {"from": whale})
     vault.deposit(amount / 20, {"from": whale})
     newWhale = token.balanceOf(whale)
     (profit, loss) = harvest_strategy(
@@ -659,7 +678,7 @@ def test_increase_keks(
         gov,
         profit_whale,
         profit_amount,
-        destination_strategy,
+        target,
     )
 
     # deposit and harvest multiple separate times to increase our nextKek
@@ -672,7 +691,7 @@ def test_increase_keks(
         gov,
         profit_whale,
         profit_amount,
-        destination_strategy,
+        target,
     )
 
     # deposit and harvest multiple separate times to increase our nextKek
@@ -685,7 +704,7 @@ def test_increase_keks(
         gov,
         profit_whale,
         profit_amount,
-        destination_strategy,
+        target,
     )
 
     # deposit and harvest multiple separate times to increase our nextKek
@@ -698,7 +717,7 @@ def test_increase_keks(
         gov,
         profit_whale,
         profit_amount,
-        destination_strategy,
+        target,
     )
 
     # deposit and harvest multiple separate times to increase our nextKek
@@ -711,7 +730,7 @@ def test_increase_keks(
         gov,
         profit_whale,
         profit_amount,
-        destination_strategy,
+        target,
     )
 
     print("First 5 harvests down")
@@ -745,13 +764,19 @@ def test_withdraw_with_some_locked(
     which_strategy,
     profit_amount,
     profit_whale,
+    use_yswaps,
+    trade_factory,
+    new_proxy,
+    convex_token,
+    frax_pid,
+    target,
 ):
     if which_strategy != 2:
         return
 
     ## deposit to the vault after approving
     startingWhale = token.balanceOf(whale)
-    token.approve(vault, 2 ** 256 - 1, {"from": whale})
+    token.approve(vault, 2**256 - 1, {"from": whale})
     vault.deposit(amount / 20, {"from": whale})
     newWhale = token.balanceOf(whale)
     (profit, loss) = harvest_strategy(
@@ -761,7 +786,7 @@ def test_withdraw_with_some_locked(
         gov,
         profit_whale,
         profit_amount,
-        destination_strategy,
+        target,
     )
 
     # deposit and harvest multiple separate times to increase our nextKek
@@ -774,7 +799,7 @@ def test_withdraw_with_some_locked(
         gov,
         profit_whale,
         profit_amount,
-        destination_strategy,
+        target,
     )
 
     # deposit and harvest multiple separate times to increase our nextKek
@@ -787,7 +812,7 @@ def test_withdraw_with_some_locked(
         gov,
         profit_whale,
         profit_amount,
-        destination_strategy,
+        target,
     )
 
     # deposit and harvest multiple separate times to increase our nextKek
@@ -800,7 +825,7 @@ def test_withdraw_with_some_locked(
         gov,
         profit_whale,
         profit_amount,
-        destination_strategy,
+        target,
     )
 
     # deposit and harvest multiple separate times to increase our nextKek
@@ -813,7 +838,7 @@ def test_withdraw_with_some_locked(
         gov,
         profit_whale,
         profit_amount,
-        destination_strategy,
+        target,
     )
 
     print("First 5 harvests down")
@@ -835,7 +860,7 @@ def test_withdraw_with_some_locked(
         gov,
         profit_whale,
         profit_amount,
-        destination_strategy,
+        target,
     )
 
     # withdraw from our first kek
@@ -862,13 +887,19 @@ def test_manual_withdrawal(
     which_strategy,
     profit_amount,
     profit_whale,
+    use_yswaps,
+    trade_factory,
+    new_proxy,
+    convex_token,
+    frax_pid,
+    target,
 ):
     if which_strategy != 2:
         return
 
     ## deposit to the vault after approving
     startingWhale = token.balanceOf(whale)
-    token.approve(vault, 2 ** 256 - 1, {"from": whale})
+    token.approve(vault, 2**256 - 1, {"from": whale})
     vault.deposit(amount / 20, {"from": whale})
     newWhale = token.balanceOf(whale)
     (profit, loss) = harvest_strategy(
@@ -878,7 +909,7 @@ def test_manual_withdrawal(
         gov,
         profit_whale,
         profit_amount,
-        destination_strategy,
+        target,
     )
 
     # deposit and harvest multiple separate times to increase our nextKek
@@ -891,7 +922,7 @@ def test_manual_withdrawal(
         gov,
         profit_whale,
         profit_amount,
-        destination_strategy,
+        target,
     )
 
     # deposit and harvest multiple separate times to increase our nextKek
@@ -904,7 +935,7 @@ def test_manual_withdrawal(
         gov,
         profit_whale,
         profit_amount,
-        destination_strategy,
+        target,
     )
 
     # deposit and harvest multiple separate times to increase our nextKek
@@ -917,7 +948,7 @@ def test_manual_withdrawal(
         gov,
         profit_whale,
         profit_amount,
-        destination_strategy,
+        target,
     )
 
     # deposit and harvest multiple separate times to increase our nextKek
@@ -930,7 +961,7 @@ def test_manual_withdrawal(
         gov,
         profit_whale,
         profit_amount,
-        destination_strategy,
+        target,
     )
 
     print("First 5 harvests down")
@@ -940,7 +971,7 @@ def test_manual_withdrawal(
     print("Locked stake:", locked)
 
     # test withdrawing 1 kek manually at a time
-    assert strategy.balanceOfWant() == 0
+    assert strategy.balanceOfWant() == profit_amount
     index_to_withdraw = strategy.nextKek() - 1
 
     # can't withdraw yet, need to wait

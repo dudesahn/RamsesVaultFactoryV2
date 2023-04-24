@@ -23,7 +23,7 @@ def test_cloning(
     strategy_name,
     profit_whale,
     profit_amount,
-    destination_strategy,
+    target,
     use_yswaps,
     which_strategy,
     trade_factory,
@@ -32,6 +32,11 @@ def test_cloning(
     booster,
     convex_token,
     gauge,
+    frax_pid,
+    staking_address,
+    frax_booster,
+    has_rewards,
+    rewards_token,
 ):
 
     # skip this test if we don't clone
@@ -40,7 +45,7 @@ def test_cloning(
 
     ## deposit to the vault after approving like normal
     starting_whale = token.balanceOf(whale)
-    token.approve(vault, 2 ** 256 - 1, {"from": whale})
+    token.approve(vault, 2**256 - 1, {"from": whale})
     vault.deposit(amount, {"from": whale})
     (profit, loss) = harvest_strategy(
         use_yswaps,
@@ -49,7 +54,7 @@ def test_cloning(
         gov,
         profit_whale,
         profit_amount,
-        destination_strategy,
+        target,
     )
     before_pps = vault.pricePerShare()
 
@@ -281,6 +286,12 @@ def test_cloning(
 
     # revoke, get funds back into vault, remove old strat from queue
     vault.revokeStrategy(strategy, {"from": gov})
+
+    if which_strategy == 2:
+        # wait another week so our frax LPs are unlocked, need to do this when reducing debt or withdrawing
+        chain.sleep(86400 * 7)
+        chain.mine(1)
+
     (profit, loss) = harvest_strategy(
         use_yswaps,
         strategy,
@@ -288,15 +299,22 @@ def test_cloning(
         gov,
         profit_whale,
         profit_amount,
-        destination_strategy,
+        target,
     )
     vault.removeStrategyFromQueue(strategy.address, {"from": gov})
 
     # attach our new strategy, ensure it's the only one
-    vault.addStrategy(new_strategy.address, 10_000, 0, 2 ** 256 - 1, 0, {"from": gov})
+    vault.addStrategy(new_strategy.address, 10_000, 0, 2**256 - 1, 0, {"from": gov})
     assert vault.withdrawalQueue(0) == new_strategy.address
     assert vault.strategies(new_strategy)["debtRatio"] == 10_000
     assert vault.strategies(strategy)["debtRatio"] == 0
+
+    # add rewards token if needed
+    if has_rewards:
+        if which_strategy == 1:
+            newStrategy.updateRewards([rewards_token], {"from": gov})
+        else:
+            newStrategy.updateRewards({"from": gov})
 
     # make sure to update our proxy if a curve strategy
     if which_strategy == 1:
@@ -310,7 +328,7 @@ def test_cloning(
         gov,
         profit_whale,
         profit_amount,
-        destination_strategy,
+        target,
     )
     old_assets = vault.totalAssets()
     assert old_assets > 0
@@ -328,20 +346,34 @@ def test_cloning(
         gov,
         profit_whale,
         profit_amount,
-        destination_strategy,
+        target,
     )
+
+    # can't harvest our old strategy anymore since the proxy only takes 1 strategy
+    if which_strategy == 1:
+        if not tests_using_tenderly:
+            with brownie.reverts("!strategy"):
+                (profit, loss) = harvest_strategy(
+                    use_yswaps,
+                    strategy,
+                    token,
+                    gov,
+                    profit_whale,
+                    profit_amount,
+                    target,
+                )
 
     # harvest again so the strategy reports the profit
     if use_yswaps:
         print("Using ySwaps for harvests")
         (profit, loss) = harvest_strategy(
             use_yswaps,
-            strategy,
+            new_strategy,
             token,
             gov,
             profit_whale,
             profit_amount,
-            destination_strategy,
+            target,
         )
     new_assets = vault.totalAssets()
 
@@ -368,12 +400,12 @@ def test_cloning(
 
     # withdraw and confirm we made money, or at least that we have about the same (profit whale has to be different from normal whale)
     vault.withdraw({"from": whale})
-    if is_slippery and no_profit:
+    if no_profit:
         assert (
             pytest.approx(token.balanceOf(whale), rel=RELATIVE_APPROX) == starting_whale
         )
     else:
-        assert token.balanceOf(whale) >= starting_whale
+        assert token.balanceOf(whale) > starting_whale
 
     # make sure our PPS went us as well
     assert vault.pricePerShare() >= before_pps

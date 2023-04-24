@@ -689,17 +689,9 @@ contract BalancerGlobal {
             "Voter strategy already exists"
         );
 
-        // get convex pid. if no pid create one
+        // get convex pid. if doesn't have one, can't create one.
         uint256 pid = getPid(_gauge);
-        if (pid == type(uint256).max) {
-            //when we add the new pool it will be added to the end of the pools in convexDeposit.
-            pid = booster.poolLength();
-            //add pool
-            require(
-                IPoolManager(convexPoolManager).addPool(_gauge),
-                "Unable to add pool to Convex"
-            );
-        }
+        require(pid != type(uint256).max, "No Aura PID");
 
         if (_permissionedUser) {
             // allow trusted users to input the name and symbol or deploy a factory version of a legacy vault

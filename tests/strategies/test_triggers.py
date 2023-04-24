@@ -1,7 +1,7 @@
 import brownie
 from brownie import chain, Contract, ZERO_ADDRESS, accounts
 import pytest
-from utils import harvest_strategy
+from utils import harvest_strategy, check_status
 
 # test our harvest triggers
 def test_triggers(
@@ -18,7 +18,7 @@ def test_triggers(
     no_profit,
     profit_whale,
     profit_amount,
-    destination_strategy,
+    target,
     base_fee_oracle,
     use_yswaps,
     which_strategy,
@@ -35,7 +35,7 @@ def test_triggers(
             gov,
             profit_whale,
             profit_amount,
-            destination_strategy,
+            target,
         )
         tx = strategy.harvestTrigger.call(0, {"from": gov})
         print("\nShould we harvest? Should be false.", tx)
@@ -44,7 +44,7 @@ def test_triggers(
 
         ## deposit to the vault after approving, no harvest yet
         starting_whale = token.balanceOf(whale)
-        token.approve(vault, 2 ** 256 - 1, {"from": whale})
+        token.approve(vault, 2**256 - 1, {"from": whale})
         vault.deposit(amount, {"from": whale})
         newWhale = token.balanceOf(whale)
         starting_assets = vault.totalAssets()
@@ -70,7 +70,7 @@ def test_triggers(
             gov,
             profit_whale,
             profit_amount,
-            destination_strategy,
+            target,
         )
 
         # should trigger false, nothing is ready yet, just harvested
@@ -118,7 +118,7 @@ def test_triggers(
             gov,
             profit_whale,
             profit_amount,
-            destination_strategy,
+            target,
         )
         print("Profit:", profit, "Loss:", loss)
         chain.sleep(sleep_time)
@@ -129,6 +129,26 @@ def test_triggers(
         print("\nShould we harvest? Should be false.", tx)
         assert tx == False
         base_fee_oracle.setManualBaseFeeBool(True, {"from": gov})
+
+        # harvest again to get the last of our profit with ySwaps
+        if use_yswaps:
+            (profit, loss) = harvest_strategy(
+                use_yswaps,
+                strategy,
+                token,
+                gov,
+                profit_whale,
+                profit_amount,
+                target,
+            )
+
+            # check our current status
+            print("\nAfter yswaps extra harvest")
+            strategy_params = check_status(strategy, vault)
+
+            # make sure we recorded our gain properly
+            if not no_profit:
+                assert profit > 0
 
         # simulate seven days of waiting for share price to bump back up and LPs to unlock
         chain.sleep(86400 * 7)
@@ -144,7 +164,7 @@ def test_triggers(
             gov,
             profit_whale,
             profit_amount,
-            destination_strategy,
+            target,
         )
         tx = strategy.harvestTrigger(0, {"from": gov})
         print("\nShould we harvest? Should be false.", tx)
@@ -153,7 +173,7 @@ def test_triggers(
 
         ## deposit to the vault after approving, no harvest yet
         starting_whale = token.balanceOf(whale)
-        token.approve(vault, 2 ** 256 - 1, {"from": whale})
+        token.approve(vault, 2**256 - 1, {"from": whale})
         vault.deposit(amount, {"from": whale})
         newWhale = token.balanceOf(whale)
         starting_assets = vault.totalAssets()
@@ -179,7 +199,7 @@ def test_triggers(
             gov,
             profit_whale,
             profit_amount,
-            destination_strategy,
+            target,
         )
 
         # should trigger false, nothing is ready yet, just harvested
@@ -266,7 +286,7 @@ def test_triggers(
             gov,
             profit_whale,
             profit_amount,
-            destination_strategy,
+            target,
         )
         print("Profit:", profit, "Loss:", loss)
         chain.sleep(sleep_time)
@@ -278,15 +298,35 @@ def test_triggers(
         assert tx == False
         base_fee_oracle.setManualBaseFeeBool(True, {"from": gov})
 
+        # harvest again to get the last of our profit with ySwaps
+        if use_yswaps:
+            (profit, loss) = harvest_strategy(
+                use_yswaps,
+                strategy,
+                token,
+                gov,
+                profit_whale,
+                profit_amount,
+                target,
+            )
+
+            # check our current status
+            print("\nAfter yswaps extra harvest")
+            strategy_params = check_status(strategy, vault)
+
+            # make sure we recorded our gain properly
+            if not no_profit:
+                assert profit > 0
+
         # simulate five days of waiting for share price to bump back up
         chain.sleep(86400 * 5)
         chain.mine(1)
 
     # withdraw and confirm we made money, or at least that we have about the same
     vault.withdraw({"from": whale})
-    if is_slippery and no_profit:
+    if no_profit:
         assert (
             pytest.approx(token.balanceOf(whale), rel=RELATIVE_APPROX) == starting_whale
         )
     else:
-        assert token.balanceOf(whale) >= starting_whale
+        assert token.balanceOf(whale) > starting_whale

@@ -24,8 +24,11 @@ def harvest_strategy(
     # usually this is automatic, but it may need to be externally triggered
 
     # claiming rewards should work just fine for this strategy, but we will earmark just in case
-    booster = interface.IAuraBooster(strategy.depositContract())
-    booster.earmarkRewards(strategy.pid(), {"from": gov})
+    try:
+        booster = interface.IAuraBooster(strategy.depositContract())
+        booster.earmarkRewards(strategy.pid(), {"from": gov})
+    except:
+        print("Not a convex strategy")
 
     # if we have no staked assets, and we are taking profit (when closing out a strategy) then we will need to ignore health check
     # we also may have profit and no assets in edge cases

@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0
 pragma solidity ^0.8.15;
-pragma experimental ABIEncoderV2;
 
 // These are the core Yearn libraries
 import "@openzeppelin/contracts/utils/math/Math.sol";
@@ -42,7 +41,7 @@ contract StrategyCurveBoostedFactoryClonable is BaseStrategy {
 
     /// @notice The address of our base token (CRV for Curve, BAL for Balancer, etc.).
     IERC20 public constant crv =
-        IERC20(0xD533a949740bb3306d119CC777fa900bA034cd52);
+        IERC20(0xba100000625a3754423978a60c9317c58a424e3D);
 
     // we use this to be able to adjust our strategy's name
     string internal stratName;
@@ -167,9 +166,10 @@ contract StrategyCurveBoostedFactoryClonable is BaseStrategy {
         // want = Curve LP
         want.approve(_proxy, type(uint256).max);
 
-        // set up our min and max delays
+        // set up our baseStrategy vars
         minReportDelay = 21 days;
         maxReportDelay = 365 days;
+        creditThreshold = 50_000e18;
 
         // ySwaps setup
         _setUpTradeFactory();

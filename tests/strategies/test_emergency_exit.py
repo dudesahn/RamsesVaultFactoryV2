@@ -1,6 +1,6 @@
 import pytest
 import brownie
-from brownie import Contract, chain
+from brownie import Contract, chain, interface
 from utils import harvest_strategy, check_status
 
 # test that emergency exit works properly
@@ -16,14 +16,21 @@ def test_emergency_exit(
     sleep_time,
     profit_whale,
     profit_amount,
-    destination_strategy,
+    target,
     use_yswaps,
     RELATIVE_APPROX,
     which_strategy,
+    new_proxy,
+    booster,
+    rewards_contract,
+    staking_address,
+    gauge_is_not_tokenized,
+    gauge,
+    voter,
 ):
     ## deposit to the vault after approving
     starting_whale = token.balanceOf(whale)
-    token.approve(vault, 2 ** 256 - 1, {"from": whale})
+    token.approve(vault, 2**256 - 1, {"from": whale})
     vault.deposit(amount, {"from": whale})
     (profit, loss) = harvest_strategy(
         use_yswaps,
@@ -32,7 +39,7 @@ def test_emergency_exit(
         gov,
         profit_whale,
         profit_amount,
-        destination_strategy,
+        target,
     )
 
     # check our current status
@@ -54,9 +61,9 @@ def test_emergency_exit(
         gov,
         profit_whale,
         profit_amount,
-        destination_strategy,
+        target,
     )
-    print("Profit:", profit / 1e18)
+    print("Harvest profit:", profit, "\n")
 
     # check our current status
     print("\nBefore exit, after second harvest")
@@ -85,6 +92,17 @@ def test_emergency_exit(
     assert vault.creditAvailable(strategy) == 0
     assert strategy_params["debtRatio"] == 0
 
+    # for some reason withdrawing via our user vault doesn't include the same getReward() call that the staking pool does natively
+    # since emergencyExit doesn't enter prepareReturn, we have to manually claim these rewards
+    # also, FXS profit accrues every block, so we will still get some dust rewards after we exit as well if we were to call getReward() again
+    if which_strategy == 2:
+        user_vault = interface.IFraxVault(strategy.userVault())
+        user_vault.getReward({"from": gov})
+
+    # again, harvests in emergency exit don't enter prepareReturn, so we need to tell the voter to send funds manually
+    if which_strategy == 1:
+        new_proxy.harvest(gauge, {"from": strategy})
+
     # harvest to send funds back to vault
     (profit, loss) = harvest_strategy(
         use_yswaps,
@@ -93,9 +111,9 @@ def test_emergency_exit(
         gov,
         profit_whale,
         profit_amount,
-        destination_strategy,
+        target,
     )
-    print("Profit:", profit / 1e18)
+    print("Harvest profit:", profit, "\n")
 
     # check our current status
     print("\nAfter third harvest")
@@ -122,9 +140,9 @@ def test_emergency_exit(
             gov,
             profit_whale,
             profit_amount,
-            destination_strategy,
+            target,
         )
-        print("Profit:", profit / 1e18)
+        print("Harvest profit:", profit, "\n")
 
         # check our current status
         print("\nAfter yswaps extra harvest")
@@ -146,7 +164,7 @@ def test_emergency_exit(
     strategy_params = check_status(strategy, vault)
 
     # share price should have gone up, without loss except for special cases
-    if is_slippery and no_profit:
+    if no_profit:
         assert (
             pytest.approx(vault.pricePerShare(), rel=RELATIVE_APPROX)
             == starting_share_price
@@ -157,12 +175,12 @@ def test_emergency_exit(
 
     # withdraw and confirm we made money, or at least that we have about the same (profit whale has to be different from normal whale)
     vault.withdraw({"from": whale})
-    if is_slippery and no_profit:
+    if no_profit:
         assert (
             pytest.approx(token.balanceOf(whale), rel=RELATIVE_APPROX) == starting_whale
         )
     else:
-        assert token.balanceOf(whale) >= starting_whale
+        assert token.balanceOf(whale) > starting_whale
 
 
 # test emergency exit, but with a donation (profit)
@@ -178,14 +196,21 @@ def test_emergency_exit_with_profit(
     sleep_time,
     profit_whale,
     profit_amount,
-    destination_strategy,
+    target,
     use_yswaps,
     RELATIVE_APPROX,
     which_strategy,
+    new_proxy,
+    booster,
+    rewards_contract,
+    staking_address,
+    gauge_is_not_tokenized,
+    gauge,
+    voter,
 ):
     ## deposit to the vault after approving
     starting_whale = token.balanceOf(whale)
-    token.approve(vault, 2 ** 256 - 1, {"from": whale})
+    token.approve(vault, 2**256 - 1, {"from": whale})
     vault.deposit(amount, {"from": whale})
     (profit, loss) = harvest_strategy(
         use_yswaps,
@@ -194,7 +219,7 @@ def test_emergency_exit_with_profit(
         gov,
         profit_whale,
         profit_amount,
-        destination_strategy,
+        target,
     )
 
     # check our current status
@@ -216,7 +241,7 @@ def test_emergency_exit_with_profit(
         gov,
         profit_whale,
         profit_amount,
-        destination_strategy,
+        target,
     )
 
     # check our current status
@@ -229,9 +254,8 @@ def test_emergency_exit_with_profit(
     else:
         assert strategy_params["totalGain"] > 0
 
-    # turn off health check since this will be a big profit from the donation
-    donation = amount / 2
-    token.transfer(strategy, donation, {"from": profit_whale})
+    # turn off health check since this will be an extra profit from the donation
+    token.transfer(strategy, profit_amount, {"from": profit_whale})
     strategy.setDoHealthCheck(False, {"from": gov})
 
     # check our current status
@@ -249,6 +273,17 @@ def test_emergency_exit_with_profit(
         # wait another week so our frax LPs are unlocked
         chain.sleep(86400 * 7)
         chain.mine(1)
+
+    # for some reason withdrawing via our user vault doesn't include the same getReward() call that the staking pool does natively
+    # since emergencyExit doesn't enter prepareReturn, we have to manually claim these rewards
+    # also, FXS profit accrues every block, so we will still get some dust rewards after we exit as well if we were to call getReward() again
+    if which_strategy == 2:
+        user_vault = interface.IFraxVault(strategy.userVault())
+        user_vault.getReward({"from": gov})
+
+    # again, harvests in emergency exit don't enter prepareReturn, so we need to tell the voter to send funds manually
+    if which_strategy == 1:
+        new_proxy.harvest(gauge, {"from": strategy})
 
     # check our current status
     print("\nAfter exit + before third harvest")
@@ -270,7 +305,7 @@ def test_emergency_exit_with_profit(
         gov,
         profit_whale,
         profit_amount,
-        destination_strategy,
+        target,
     )
 
     # check our current status
@@ -298,7 +333,7 @@ def test_emergency_exit_with_profit(
             gov,
             profit_whale,
             profit_amount,
-            destination_strategy,
+            target,
         )
 
         # check our current status
@@ -321,7 +356,7 @@ def test_emergency_exit_with_profit(
     strategy_params = check_status(strategy, vault)
 
     # share price should have gone up, without loss except for special cases
-    if is_slippery and no_profit:
+    if no_profit:
         assert (
             pytest.approx(vault.pricePerShare(), rel=RELATIVE_APPROX)
             == starting_share_price
@@ -332,12 +367,12 @@ def test_emergency_exit_with_profit(
 
     # withdraw and confirm we made money, or at least that we have about the same (profit whale has to be different from normal whale)
     vault.withdraw({"from": whale})
-    if is_slippery and no_profit:
+    if no_profit:
         assert (
             pytest.approx(token.balanceOf(whale), rel=RELATIVE_APPROX) == starting_whale
         )
     else:
-        assert token.balanceOf(whale) >= starting_whale
+        assert token.balanceOf(whale) > starting_whale
 
 
 # test emergency exit, but after somehow losing all of our assets (oopsie)
@@ -353,7 +388,7 @@ def test_emergency_exit_with_loss(
     sleep_time,
     profit_whale,
     profit_amount,
-    destination_strategy,
+    target,
     use_yswaps,
     old_vault,
     RELATIVE_APPROX,
@@ -362,10 +397,14 @@ def test_emergency_exit_with_loss(
     new_proxy,
     booster,
     rewards_contract,
+    staking_address,
+    gauge_is_not_tokenized,
+    gauge,
+    voter,
 ):
     ## deposit to the vault after approving
     starting_whale = token.balanceOf(whale)
-    token.approve(vault, 2 ** 256 - 1, {"from": whale})
+    token.approve(vault, 2**256 - 1, {"from": whale})
     vault.deposit(amount, {"from": whale})
     (profit, loss) = harvest_strategy(
         use_yswaps,
@@ -374,7 +413,7 @@ def test_emergency_exit_with_loss(
         gov,
         profit_whale,
         profit_amount,
-        destination_strategy,
+        target,
     )
 
     # check our current status
@@ -467,6 +506,17 @@ def test_emergency_exit_with_loss(
     # set emergency and exit, but turn off health check since we're taking a huge L
     strategy.setEmergencyExit({"from": gov})
 
+    # for some reason withdrawing via our user vault doesn't include the same getReward() call that the staking pool does natively
+    # since emergencyExit doesn't enter prepareReturn, we have to manually claim these rewards
+    # also, FXS profit accrues every block, so we will still get some dust rewards after we exit as well if we were to call getReward() again
+    if which_strategy == 2:
+        user_vault = interface.IFraxVault(strategy.userVault())
+        user_vault.getReward({"from": gov})
+
+    # again, harvests in emergency exit don't enter prepareReturn, so we need to tell the voter to send funds manually
+    if which_strategy == 1:
+        new_proxy.harvest(gauge, {"from": strategy})
+
     # check our current status
     print("\nAfter exit + before second harvest")
     strategy_params = check_status(strategy, vault)
@@ -502,7 +552,7 @@ def test_emergency_exit_with_loss(
         gov,
         profit_whale,
         profit_amount,
-        destination_strategy,
+        target,
     )
 
     # check our current status
@@ -525,7 +575,7 @@ def test_emergency_exit_with_loss(
             gov,
             profit_whale,
             profit_amount,
-            destination_strategy,
+            target,
         )
         print("Profit:", profit / 1e18)
 
@@ -585,7 +635,7 @@ def test_emergency_exit_with_no_loss(
     sleep_time,
     profit_whale,
     profit_amount,
-    destination_strategy,
+    target,
     use_yswaps,
     RELATIVE_APPROX,
     which_strategy,
@@ -594,10 +644,14 @@ def test_emergency_exit_with_no_loss(
     new_proxy,
     booster,
     rewards_contract,
+    staking_address,
+    gauge_is_not_tokenized,
+    gauge,
+    voter,
 ):
     ## deposit to the vault after approving
     starting_whale = token.balanceOf(whale)
-    token.approve(vault, 2 ** 256 - 1, {"from": whale})
+    token.approve(vault, 2**256 - 1, {"from": whale})
     vault.deposit(amount, {"from": whale})
     (profit, loss) = harvest_strategy(
         use_yswaps,
@@ -606,7 +660,7 @@ def test_emergency_exit_with_no_loss(
         gov,
         profit_whale,
         profit_amount,
-        destination_strategy,
+        target,
     )
 
     # check our current status
@@ -705,6 +759,17 @@ def test_emergency_exit_with_no_loss(
     # set emergency exit
     strategy.setEmergencyExit({"from": gov})
 
+    # for some reason withdrawing via our user vault doesn't include the same getReward() call that the staking pool does natively
+    # since emergencyExit doesn't enter prepareReturn, we have to manually claim these rewards
+    # also, FXS profit accrues every block, so we will still get some dust rewards after we exit as well if we were to call getReward() again
+    if which_strategy == 2:
+        user_vault = interface.IFraxVault(strategy.userVault())
+        user_vault.getReward({"from": gov})
+
+    # again, harvests in emergency exit don't enter prepareReturn, so we need to tell the voter to send funds manually
+    if which_strategy == 1:
+        new_proxy.harvest(gauge, {"from": strategy})
+
     # check our current status
     print("\nAfter exit + before second harvest")
     strategy_params = check_status(strategy, vault)
@@ -741,7 +806,7 @@ def test_emergency_exit_with_no_loss(
         gov,
         profit_whale,
         profit_amount,
-        destination_strategy,
+        target,
     )
 
     # check our current status
@@ -762,7 +827,7 @@ def test_emergency_exit_with_no_loss(
             gov,
             profit_whale,
             profit_amount,
-            destination_strategy,
+            target,
         )
         print("Profit:", profit / 1e18)
 
@@ -843,14 +908,15 @@ def test_emergency_shutdown_from_vault(
     no_profit,
     profit_whale,
     profit_amount,
-    destination_strategy,
+    target,
     use_yswaps,
     RELATIVE_APPROX,
     which_strategy,
+    staking_address,
 ):
     ## deposit to the vault after approving
     starting_whale = token.balanceOf(whale)
-    token.approve(vault, 2 ** 256 - 1, {"from": whale})
+    token.approve(vault, 2**256 - 1, {"from": whale})
     vault.deposit(amount, {"from": whale})
     (profit, loss) = harvest_strategy(
         use_yswaps,
@@ -859,7 +925,7 @@ def test_emergency_shutdown_from_vault(
         gov,
         profit_whale,
         profit_amount,
-        destination_strategy,
+        target,
     )
 
     # check our current status
@@ -881,7 +947,7 @@ def test_emergency_shutdown_from_vault(
         gov,
         profit_whale,
         profit_amount,
-        destination_strategy,
+        target,
     )
 
     # simulate earnings
@@ -916,6 +982,11 @@ def test_emergency_shutdown_from_vault(
     assert vault.creditAvailable(strategy) == 0
     assert strategy_params["debtRatio"] == 10_000
 
+    if which_strategy == 2:
+        # wait another week so our frax LPs are unlocked, need to do this when reducing debt or withdrawing
+        chain.sleep(86400 * 7)
+        chain.mine(1)
+
     (profit, loss) = harvest_strategy(
         use_yswaps,
         strategy,
@@ -923,7 +994,7 @@ def test_emergency_shutdown_from_vault(
         gov,
         profit_whale,
         profit_amount,
-        destination_strategy,
+        target,
     )
 
     # check our current status
@@ -951,7 +1022,7 @@ def test_emergency_shutdown_from_vault(
             gov,
             profit_whale,
             profit_amount,
-            destination_strategy,
+            target,
         )
 
         # check our current status
@@ -984,7 +1055,7 @@ def test_emergency_shutdown_from_vault(
     strategy_params = check_status(strategy, vault)
 
     # share price should have gone up, without loss except for special cases
-    if is_slippery and no_profit:
+    if no_profit:
         assert (
             pytest.approx(vault.pricePerShare(), rel=RELATIVE_APPROX)
             == starting_share_price
@@ -1000,9 +1071,421 @@ def test_emergency_shutdown_from_vault(
 
     # withdraw and confirm we made money, or at least that we have about the same (profit whale has to be different from normal whale)
     vault.withdraw({"from": whale})
-    if is_slippery and no_profit:
+    if no_profit:
         assert (
             pytest.approx(token.balanceOf(whale), rel=RELATIVE_APPROX) == starting_whale
         )
     else:
-        assert token.balanceOf(whale) >= starting_whale
+        assert token.balanceOf(whale) > starting_whale
+
+
+def test_emergency_withdraw_method_0(
+    gov,
+    token,
+    vault,
+    strategist,
+    whale,
+    strategy,
+    cvx_deposit,
+    amount,
+    sleep_time,
+    profit_amount,
+    profit_whale,
+    target,
+    use_yswaps,
+    old_vault,
+    RELATIVE_APPROX,
+    which_strategy,
+    pid,
+    new_proxy,
+    booster,
+    rewards_contract,
+    staking_address,
+    is_slippery,
+    no_profit,
+):
+    # only curve convex
+    if which_strategy != 0 or booster == "0xA57b8d98dAE62B26Ec3bcC4a365338157060B234":
+        return
+
+    ## deposit to the vault after approving
+    starting_whale = token.balanceOf(whale)
+    token.approve(vault, 2**256 - 1, {"from": whale})
+    vault.deposit(amount, {"from": whale})
+    (profit, loss) = harvest_strategy(
+        use_yswaps,
+        strategy,
+        token,
+        gov,
+        profit_whale,
+        profit_amount,
+        target,
+    )
+
+    # check our current status
+    print("\nAfter first harvest")
+    strategy_params = check_status(strategy, vault)
+
+    # evaluate our current total assets
+    old_assets = vault.totalAssets()
+    initial_debt = strategy_params["totalDebt"]
+    starting_share_price = vault.pricePerShare()
+    initial_strategy_assets = strategy.estimatedTotalAssets()
+
+    # simulate earnings
+    chain.sleep(sleep_time)
+
+    # set emergency exit so no funds will go back to strategy
+    # here we assume that the swap out to curve pool tokens is borked, so we stay in cvx vault tokens and send to gov
+    # we also assume extra rewards are fine, so we will collect them on harvest and withdrawal
+    strategy.setClaimRewards(True, {"from": gov})
+    strategy.withdrawToConvexDepositTokens({"from": gov})
+
+    ################# SET FALSE IF PROFIT EXPECTED. ADJUST AS NEEDED. #################
+    # set this true if no profit on this test. it is normal for a strategy to not generate profit here.
+    # realistically only wrapped tokens or every-block earners will see profits (convex, etc).
+    # also checked in test_change_debt
+    no_profit = False
+
+    # check our current status
+    print("\nBefore dust transfer, after main fund transfer")
+    strategy_params = check_status(strategy, vault)
+
+    # we shouldn't have taken any actual losses yet, and debt/DR/share price should all still be the same
+    assert strategy_params["debtRatio"] == 10_000
+    assert strategy_params["totalLoss"] == 0
+    assert strategy_params["totalDebt"] == initial_debt == old_assets
+    assert vault.pricePerShare() == starting_share_price
+
+    # if slippery, then assets may differ slightly from debt
+    if is_slippery:
+        assert (
+            pytest.approx(initial_debt, rel=RELATIVE_APPROX) == initial_strategy_assets
+        )
+    else:
+        assert initial_debt == initial_strategy_assets
+
+    # confirm we emptied the strategy
+    assert strategy.estimatedTotalAssets() == 0
+
+    # our whale donates 5 wei to the vault so we don't divide by zero (needed for older vaults)
+    if old_vault:
+        dust_donation = 5
+        token.transfer(strategy, dust_donation, {"from": whale})
+        assert strategy.estimatedTotalAssets() == dust_donation
+
+    # check our current status
+    print("\nBefore exit, after funds transfer out + dust transfer in")
+    strategy_params = check_status(strategy, vault)
+
+    # we shouldn't have taken any actual losses yet, and debt/DR/share price should all still be the same
+    assert strategy_params["debtRatio"] == 10_000
+    assert strategy_params["totalLoss"] == 0
+    assert strategy_params["totalDebt"] == initial_debt == old_assets
+    assert vault.pricePerShare() == starting_share_price
+    assert vault.debtOutstanding(strategy) == 0
+
+    # set emergency exit
+    strategy.setEmergencyExit({"from": gov})
+
+    # check our current status
+    print("\nAfter exit + before second harvest")
+    strategy_params = check_status(strategy, vault)
+
+    # we shouldn't have taken any actual losses yet, only DR and debtOutstanding should have changed
+    assert vault.pricePerShare() == starting_share_price
+    assert strategy_params["debtRatio"] == 0
+    assert strategy_params["totalLoss"] == 0
+    assert vault.creditAvailable(strategy) == 0
+    assert strategy_params["debtRatio"] == 0
+
+    # debtOutstanding uses both totalAssets and totalDebt, with 10_000 DR they should all be the same
+    assert (
+        strategy_params["totalDebt"]
+        == initial_debt
+        == old_assets
+        == vault.debtOutstanding(strategy)
+    )
+
+    # if slippery, then assets may differ slightly from debt
+    if is_slippery:
+        assert (
+            pytest.approx(initial_debt, rel=RELATIVE_APPROX) == initial_strategy_assets
+        )
+    else:
+        assert initial_debt == initial_strategy_assets
+
+    # turn off health check since we're doing weird shit
+
+    strategy.setDoHealthCheck(False, {"from": gov})
+    (profit, loss) = harvest_strategy(
+        use_yswaps,
+        strategy,
+        token,
+        gov,
+        profit_whale,
+        profit_amount,
+        target,
+    )
+
+    # check our current status
+    print("\nAfter second harvest (losses taken)")
+    strategy_params = check_status(strategy, vault)
+
+    # DR goes to zero, loss is > 0, gain and debt should be zero, share price zero (bye-bye assets 💀)
+    assert strategy_params["debtRatio"] == 0
+    assert strategy_params["totalLoss"] > 0
+    assert strategy_params["totalDebt"] == strategy_params["totalGain"] == 0
+    assert vault.pricePerShare() == 0
+
+    # yswaps needs another harvest to get the final bit of profit to the vault
+    if use_yswaps:
+        old_gain = strategy_params["totalGain"]
+        (profit, loss) = harvest_strategy(
+            use_yswaps,
+            strategy,
+            token,
+            gov,
+            profit_whale,
+            profit_amount,
+            target,
+        )
+        print("Profit:", profit / 1e18)
+
+        # check our current status
+        print("\nAfter yswaps extra harvest")
+        strategy_params = check_status(strategy, vault)
+
+        # make sure we recorded our gain properly
+        if not no_profit:
+            assert strategy_params["totalGain"] > old_gain
+
+    # confirm that the strategy has no funds, even for old vaults with the dust donation
+    assert strategy.estimatedTotalAssets() == 0
+    assert rewards_contract.balanceOf(strategy) == 0
+    assert cvx_deposit.balanceOf(strategy) > 0
+
+    # vault should also have no assets or just profit, except old ones will also have 5 wei
+    expected_assets = 0
+    if use_yswaps and not no_profit:
+        expected_assets += profit_amount
+    if old_vault:
+        expected_assets += dust_donation
+    assert vault.totalAssets() == expected_assets
+
+    # simulate 5 days of waiting for share price to bump back up
+    chain.sleep(86400 * 5)
+    chain.mine(1)
+
+    # check our current status
+    print("\nAfter sleep for share price")
+    strategy_params = check_status(strategy, vault)
+
+    # withdraw and see how down bad we are, confirming we can withdraw from an empty (or mostly empty) vault
+    vault.withdraw({"from": whale})
+    print(
+        "Raw loss:",
+        (starting_whale - token.balanceOf(whale)) / 1e18,
+        "Percentage:",
+        (starting_whale - token.balanceOf(whale)) / starting_whale,
+    )
+    print("Share price:", vault.pricePerShare() / 1e18)
+
+    # sweep this from the strategy with gov and wait until we can figure out how to unwrap them
+    strategy.sweep(cvx_deposit, {"from": gov})
+    assert cvx_deposit.balanceOf(gov) > 0
+
+
+def test_emergency_withdraw_method_1(
+    gov,
+    token,
+    vault,
+    strategist,
+    whale,
+    strategy,
+    cvx_deposit,
+    amount,
+    sleep_time,
+    profit_amount,
+    profit_whale,
+    target,
+    use_yswaps,
+    old_vault,
+    RELATIVE_APPROX,
+    which_strategy,
+    pid,
+    new_proxy,
+    booster,
+    rewards_contract,
+    staking_address,
+    is_slippery,
+    no_profit,
+):
+    # only curve convex
+    if which_strategy != 0 or booster == "0xA57b8d98dAE62B26Ec3bcC4a365338157060B234":
+        return
+
+    ## deposit to the vault after approving
+    starting_whale = token.balanceOf(whale)
+    token.approve(vault, 2**256 - 1, {"from": whale})
+    vault.deposit(amount, {"from": whale})
+    (profit, loss) = harvest_strategy(
+        use_yswaps,
+        strategy,
+        token,
+        gov,
+        profit_whale,
+        profit_amount,
+        target,
+    )
+
+    # check our current status
+    print("\nAfter first harvest")
+    strategy_params = check_status(strategy, vault)
+
+    # evaluate our current total assets
+    old_assets = vault.totalAssets()
+    initial_debt = strategy_params["totalDebt"]
+    starting_share_price = vault.pricePerShare()
+    initial_strategy_assets = strategy.estimatedTotalAssets()
+
+    # simulate earnings
+    chain.sleep(sleep_time)
+
+    # set emergency exit so no funds will go back to strategy
+    # here we assume that the swap out to curve pool tokens is borked, so we stay in cvx vault tokens and send to gov
+    # we also assume extra rewards are borked so we don't want them when harvesting or withdrawing
+    strategy.setClaimRewards(False, {"from": gov})
+    strategy.withdrawToConvexDepositTokens({"from": gov})
+
+    ################# SET FALSE IF PROFIT EXPECTED. ADJUST AS NEEDED. #################
+    # set this true if no profit on this test. it is normal for a strategy to not generate profit here.
+    # realistically only wrapped tokens or every-block earners will see profits (convex, etc).
+    # also checked in test_change_debt
+    # no profit since we don't claim any rewards on withdrawal
+    no_profit = True
+
+    # check our current status
+    print("\nBefore dust transfer, after main fund transfer")
+    strategy_params = check_status(strategy, vault)
+
+    # we shouldn't have taken any actual losses yet, and debt/DR/share price should all still be the same
+    assert strategy_params["debtRatio"] == 10_000
+    assert strategy_params["totalLoss"] == 0
+    assert strategy_params["totalDebt"] == initial_debt == old_assets
+    assert vault.pricePerShare() == starting_share_price
+
+    # if slippery, then assets may differ slightly from debt
+    if is_slippery:
+        assert (
+            pytest.approx(initial_debt, rel=RELATIVE_APPROX) == initial_strategy_assets
+        )
+    else:
+        assert initial_debt == initial_strategy_assets
+
+    # confirm we emptied the strategy
+    assert strategy.estimatedTotalAssets() == 0
+
+    # our whale donates 5 wei to the vault so we don't divide by zero (needed for older vaults)
+    if old_vault:
+        dust_donation = 5
+        token.transfer(strategy, dust_donation, {"from": whale})
+        assert strategy.estimatedTotalAssets() == dust_donation
+
+    # check our current status
+    print("\nBefore exit, after funds transfer out + dust transfer in")
+    strategy_params = check_status(strategy, vault)
+
+    # we shouldn't have taken any actual losses yet, and debt/DR/share price should all still be the same
+    assert strategy_params["debtRatio"] == 10_000
+    assert strategy_params["totalLoss"] == 0
+    assert strategy_params["totalDebt"] == initial_debt == old_assets
+    assert vault.pricePerShare() == starting_share_price
+    assert vault.debtOutstanding(strategy) == 0
+
+    # set emergency exit
+    strategy.setEmergencyExit({"from": gov})
+
+    # check our current status
+    print("\nAfter exit + before second harvest")
+    strategy_params = check_status(strategy, vault)
+
+    # we shouldn't have taken any actual losses yet, only DR and debtOutstanding should have changed
+    assert vault.pricePerShare() == starting_share_price
+    assert strategy_params["debtRatio"] == 0
+    assert strategy_params["totalLoss"] == 0
+    assert vault.creditAvailable(strategy) == 0
+    assert strategy_params["debtRatio"] == 0
+
+    # debtOutstanding uses both totalAssets and totalDebt, with 10_000 DR they should all be the same
+    assert (
+        strategy_params["totalDebt"]
+        == initial_debt
+        == old_assets
+        == vault.debtOutstanding(strategy)
+    )
+
+    # if slippery, then assets may differ slightly from debt
+    if is_slippery:
+        assert (
+            pytest.approx(initial_debt, rel=RELATIVE_APPROX) == initial_strategy_assets
+        )
+    else:
+        assert initial_debt == initial_strategy_assets
+
+    # turn off health check since we're doing weird shit
+    strategy.setDoHealthCheck(False, {"from": gov})
+    (profit, loss) = harvest_strategy(
+        use_yswaps,
+        strategy,
+        token,
+        gov,
+        profit_whale,
+        profit_amount,
+        target,
+    )
+
+    # check our current status
+    print("\nAfter second harvest (losses taken)")
+    strategy_params = check_status(strategy, vault)
+
+    # DR goes to zero, loss is > 0, gain and debt should be zero, share price zero (bye-bye assets 💀)
+    assert strategy_params["debtRatio"] == 0
+    assert strategy_params["totalLoss"] > 0
+    assert strategy_params["totalDebt"] == strategy_params["totalGain"] == 0
+    assert vault.pricePerShare() == 0
+
+    # confirm that the strategy has no funds, even for old vaults with the dust donation
+    assert strategy.estimatedTotalAssets() == 0
+    assert rewards_contract.balanceOf(strategy) == 0
+    assert cvx_deposit.balanceOf(strategy) > 0
+
+    # vault should also have no assets or just profit, except old ones will also have 5 wei
+    expected_assets = 0
+    if use_yswaps and not no_profit:
+        expected_assets += profit_amount
+    if old_vault:
+        expected_assets += dust_donation
+    assert vault.totalAssets() == expected_assets
+
+    # simulate 5 days of waiting for share price to bump back up
+    chain.sleep(86400 * 5)
+    chain.mine(1)
+
+    # check our current status
+    print("\nAfter sleep for share price")
+    strategy_params = check_status(strategy, vault)
+
+    # withdraw and see how down bad we are, confirming we can withdraw from an empty (or mostly empty) vault
+    vault.withdraw({"from": whale})
+    print(
+        "Raw loss:",
+        (starting_whale - token.balanceOf(whale)) / 1e18,
+        "Percentage:",
+        (starting_whale - token.balanceOf(whale)) / starting_whale,
+    )
+    print("Share price:", vault.pricePerShare() / 1e18)
+
+    # sweep this from the strategy with gov and wait until we can figure out how to unwrap them
+    strategy.sweep(cvx_deposit, {"from": gov})
+    assert cvx_deposit.balanceOf(gov) > 0

@@ -1,5 +1,5 @@
 import brownie
-from brownie import Contract, chain, ZERO_ADDRESS
+from brownie import Contract, chain, ZERO_ADDRESS, interface
 import pytest
 from utils import harvest_strategy, check_status
 
@@ -15,7 +15,7 @@ def test_liquidatePosition(
     amount,
     profit_whale,
     profit_amount,
-    destination_strategy,
+    target,
     use_yswaps,
     is_slippery,
     RELATIVE_APPROX,
@@ -25,10 +25,14 @@ def test_liquidatePosition(
     new_proxy,
     booster,
     rewards_contract,
+    staking_address,
+    gauge_is_not_tokenized,
+    gauge,
+    voter,
 ):
     ## deposit to the vault after approving
     starting_whale = token.balanceOf(whale)
-    token.approve(vault, 2 ** 256 - 1, {"from": whale})
+    token.approve(vault, 2**256 - 1, {"from": whale})
     vault.deposit(amount, {"from": whale})
     (profit, loss) = harvest_strategy(
         use_yswaps,
@@ -37,7 +41,7 @@ def test_liquidatePosition(
         gov,
         profit_whale,
         profit_amount,
-        destination_strategy,
+        target,
     )
 
     # check our current status
@@ -162,15 +166,10 @@ def test_liquidatePosition(
                 == old_assets
             )
             # debt outstanding is the portion of debt that needs to be paid back (DR is still greater than zero)
-            assert (
-                pytest.approx(
-                    vault.totalAssets()
-                    * (10_000 - strategy_params["debtRatio"])
-                    / 10_000,
-                    rel=RELATIVE_APPROX,
-                )
-                == vault.debtOutstanding(strategy)
-            )
+            assert pytest.approx(
+                vault.totalAssets() * (10_000 - strategy_params["debtRatio"]) / 10_000,
+                rel=RELATIVE_APPROX,
+            ) == vault.debtOutstanding(strategy)
         else:
             assert strategy_params["totalDebt"] + amount == old_assets
             assert strategy_params["debtRatio"] == whale_holdings
@@ -197,9 +196,10 @@ def test_locked_funds(
     sleep_time,
     profit_whale,
     profit_amount,
-    destination_strategy,
+    target,
     use_yswaps,
     old_vault,
+    staking_address,
 ):
     # should update this one for Router
     print("No way to test this for current strategy")
@@ -215,7 +215,7 @@ def test_rekt(
     amount,
     profit_whale,
     profit_amount,
-    destination_strategy,
+    target,
     use_yswaps,
     old_vault,
     which_strategy,
@@ -223,10 +223,14 @@ def test_rekt(
     new_proxy,
     booster,
     rewards_contract,
+    staking_address,
+    gauge_is_not_tokenized,
+    gauge,
+    voter,
 ):
     ## deposit to the vault after approving
     starting_whale = token.balanceOf(whale)
-    token.approve(vault, 2 ** 256 - 1, {"from": whale})
+    token.approve(vault, 2**256 - 1, {"from": whale})
     vault.deposit(amount, {"from": whale})
     (profit, loss) = harvest_strategy(
         use_yswaps,
@@ -235,7 +239,7 @@ def test_rekt(
         gov,
         profit_whale,
         profit_amount,
-        destination_strategy,
+        target,
     )
 
     # check our current status
@@ -296,7 +300,7 @@ def test_rekt(
         gov,
         profit_whale,
         profit_amount,
-        destination_strategy,
+        target,
     )
     # assert strategy.estimatedTotalAssets() == 0
 
@@ -327,7 +331,8 @@ def test_weird_reverts(
     vault,
     whale,
     strategy,
-    destination_strategy,
+    target,
+    other_strategy,
 ):
 
     # only vault can call this
@@ -336,7 +341,7 @@ def test_weird_reverts(
 
     # can't migrate to a different vault
     with brownie.reverts():
-        vault.migrateStrategy(strategy, destination_strategy, {"from": gov})
+        vault.migrateStrategy(strategy, other_strategy, {"from": gov})
 
     # can't withdraw from a non-vault address
     with brownie.reverts():
@@ -354,7 +359,7 @@ def test_empty_strat(
     amount,
     profit_whale,
     profit_amount,
-    destination_strategy,
+    target,
     use_yswaps,
     old_vault,
     is_slippery,
@@ -365,10 +370,15 @@ def test_empty_strat(
     new_proxy,
     booster,
     rewards_contract,
+    staking_address,
+    gauge_is_not_tokenized,
+    gauge,
+    voter,
+    sleep_time,
 ):
     ## deposit to the vault after approving
     starting_whale = token.balanceOf(whale)
-    token.approve(vault, 2 ** 256 - 1, {"from": whale})
+    token.approve(vault, 2**256 - 1, {"from": whale})
     vault.deposit(amount, {"from": whale})
     (profit, loss) = harvest_strategy(
         use_yswaps,
@@ -377,7 +387,7 @@ def test_empty_strat(
         gov,
         profit_whale,
         profit_amount,
-        destination_strategy,
+        target,
     )
 
     # check our current status
@@ -389,6 +399,9 @@ def test_empty_strat(
     initial_strategy_assets = strategy.estimatedTotalAssets()
     initial_debt = strategy_params["totalDebt"]
     starting_share_price = vault.pricePerShare()
+
+    # sleep to get some yield
+    chain.sleep(sleep_time)
 
     ################# SEND ALL FUNDS AWAY. ADJUST AS NEEDED PER STRATEGY. #################
     if which_strategy == 0:
@@ -404,13 +417,22 @@ def test_empty_strat(
         to_send = gauge.balanceOf(voter)
         print("Gauge Balance of Vault", to_send)
         gauge.transfer(gov, to_send, {"from": voter})
+
+        # curve needs a little push to manually get that small amount of yield earned
+        if which_strategy == 1:
+            new_proxy.harvest(gauge, {"from": strategy})
+
     else:
         # wait another week so our frax LPs are unlocked
         chain.sleep(86400 * 7)
         chain.mine(1)
 
+        # we have to manually claim these rewards
+        # also, FXS profit accrues every block, so we will still get some dust rewards after we exit as well if we were to call getReward() again
+        user_vault = interface.IFraxVault(strategy.userVault())
+        user_vault.getReward({"from": gov})
+
         # try and make the staking pool send away assets to simulate losses
-        user_vault = Contract(strategy.userVault())
         staking_contract = Contract(staking_address)
         staking_token = Contract(staking_contract.stakingToken())
         stake = staking_contract.lockedStakesOf(user_vault)[0]
@@ -474,7 +496,7 @@ def test_empty_strat(
         gov,
         profit_whale,
         profit_amount,
-        destination_strategy,
+        target,
     )
     assert loss > 0
 
@@ -516,7 +538,7 @@ def test_empty_strat(
         gov,
         profit_whale,
         profit_amount,
-        destination_strategy,
+        target,
     )
     assert profit > 0
     share_price = vault.pricePerShare()
@@ -535,12 +557,12 @@ def test_no_profit(
     amount,
     profit_whale,
     profit_amount,
-    destination_strategy,
+    target,
     use_yswaps,
     sleep_time,
 ):
     ## deposit to the vault after approving
-    token.approve(vault, 2 ** 256 - 1, {"from": whale})
+    token.approve(vault, 2**256 - 1, {"from": whale})
     vault.deposit(amount, {"from": whale})
     (profit, loss) = harvest_strategy(
         use_yswaps,
@@ -549,7 +571,7 @@ def test_no_profit(
         gov,
         profit_whale,
         profit_amount,
-        destination_strategy,
+        target,
     )
 
     # check our current status
@@ -570,7 +592,7 @@ def test_no_profit(
         gov,
         profit_whale,
         0,
-        destination_strategy,
+        target,
     )
 
     # check our current status

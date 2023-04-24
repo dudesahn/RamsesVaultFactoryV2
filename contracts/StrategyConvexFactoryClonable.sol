@@ -141,6 +141,9 @@ contract StrategyConvexFactoryClonable is BaseStrategy {
     /// @notice Will only be true on the original deployed contract and not on clones; we don't want to clone a clone.
     bool public isOriginal = true;
 
+    /// @notice A wrapper for CVX in newer rewards pools that doesn't behave like a normal token.
+    address public cvxWrapper;
+
     /* ========== CONSTRUCTOR ========== */
 
     constructor(
@@ -288,8 +291,9 @@ contract StrategyConvexFactoryClonable is BaseStrategy {
         // want = Curve LP
         want.approve(address(_booster), type(uint256).max);
 
-        // set up our max delay
+        // set up our baseStrategy vars
         maxReportDelay = 365 days;
+        creditThreshold = 50_000e18;
 
         // use the booster contract to pull more info needed
         IConvexDeposit booster = IConvexDeposit(_booster);
@@ -501,17 +505,6 @@ contract StrategyConvexFactoryClonable is BaseStrategy {
         returns (address[] memory)
     {}
 
-    /// @notice In case we need to emergency exit into the convex deposit
-    ///  token, this will allow us to do that.
-    /// @dev Make sure to check claimRewards before this step if needed, and
-    ///  plan to have gov sweep convex deposit tokens from strategy after this.
-    function withdrawToConvexDepositTokens() external onlyVaultManagers {
-        uint256 _stakedBal = stakedBalance();
-        if (_stakedBal > 0) {
-            rewardsContract.withdraw(_stakedBal, claimRewards);
-        }
-    }
-
     /* ========== YSWAPS ========== */
 
     /// @notice Use to add or update rewards, rebuilds tradefactory too
@@ -539,7 +532,7 @@ contract StrategyConvexFactoryClonable is BaseStrategy {
                 .rewardToken();
 
             // we only need to approve the new token and turn on rewards if the extra reward isn't CVX
-            if (_rewardsToken != _convexToken) {
+            if (_rewardsToken != _convexToken || _rewardsToken != cvxWrapper) {
                 rewardsTokens.push(_rewardsToken);
             }
         }
@@ -572,6 +565,10 @@ contract StrategyConvexFactoryClonable is BaseStrategy {
         // enable for any rewards tokens too
         for (uint256 i; i < rewardsTokens.length; ++i) {
             address _rewardsToken = rewardsTokens[i];
+            // cvxWrapper is not a normal token
+            if (_rewardsToken == cvxWrapper) {
+                continue;
+            }
             IERC20(_rewardsToken).approve(_tradeFactory, type(uint256).max);
             tf.enable(_rewardsToken, _want);
         }
@@ -606,6 +603,10 @@ contract StrategyConvexFactoryClonable is BaseStrategy {
         // disable for all rewards tokens too
         for (uint256 i; i < rewardsTokens.length; ++i) {
             address _rewardsToken = rewardsTokens[i];
+            // cvxWrapper is not a normal token
+            if (_rewardsToken == cvxWrapper) {
+                continue;
+            }
             IERC20(_rewardsToken).approve(_tradeFactory, 0);
             if (_disableTf) {
                 tf.disable(_rewardsToken, _want);
@@ -806,6 +807,13 @@ contract StrategyConvexFactoryClonable is BaseStrategy {
     /// @param _claimRewards Whether we want to claim rewards on withdrawals.
     function setClaimRewards(bool _claimRewards) external onlyVaultManagers {
         claimRewards = _claimRewards;
+    }
+
+    /// @notice Set address for our CVX wrapper.
+    /// @dev For Aura doesn't currently exist, even though it is used for Convex.
+    /// @param _wrapper Address of our wrapper token to skip approvals for.
+    function setCvxWrapper(address _wrapper) external onlyVaultManagers {
+        cvxWrapper = _wrapper;
     }
 
     /**

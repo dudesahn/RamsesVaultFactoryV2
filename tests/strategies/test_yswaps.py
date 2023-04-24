@@ -13,11 +13,12 @@ def test_keepers_and_trade_handler(
     sleep_time,
     profit_whale,
     profit_amount,
-    destination_strategy,
+    target,
     use_yswaps,
     keeper_wrapper,
     trade_factory,
     crv_whale,
+    which_strategy,
 ):
     # no testing needed if we're not using yswaps
     if not use_yswaps:
@@ -25,7 +26,7 @@ def test_keepers_and_trade_handler(
 
     ## deposit to the vault after approving
     starting_whale = token.balanceOf(whale)
-    token.approve(vault, 2 ** 256 - 1, {"from": whale})
+    token.approve(vault, 2**256 - 1, {"from": whale})
     vault.deposit(amount, {"from": whale})
     newWhale = token.balanceOf(whale)
 
@@ -37,7 +38,7 @@ def test_keepers_and_trade_handler(
         gov,
         profit_whale,
         profit_amount,
-        destination_strategy,
+        target,
     )
 
     # simulate profits
@@ -52,7 +53,7 @@ def test_keepers_and_trade_handler(
         gov,
         profit_whale,
         profit_amount,
-        destination_strategy,
+        target,
     )
 
     # set our keeper up
@@ -107,12 +108,27 @@ def test_keepers_and_trade_handler(
         strategy.updateTradeFactory(ZERO_ADDRESS, {"from": gov})
 
     # update our rewards again, shouldn't really change things
-    strategy.updateRewards({"from": gov})
+    if which_strategy != 1:
+        strategy.updateRewards({"from": gov})
+    else:
+        strategy.updateRewards([], {"from": gov})
 
-    # don't have an extra token here, for the trade factory we already default to have CRV and CVX there
-    with brownie.reverts():
-        strategy.rewardsTokens(0)
+    # check out our rewardsTokens
+    if which_strategy == 0:
+        # for convex, 0 position may be occupied by wrapped CVX token
+        with brownie.reverts():
+            strategy.rewardsTokens(1)
+    if which_strategy == 1:
+        with brownie.reverts():
+            strategy.rewardsTokens(0)
+    if which_strategy == 2:
+        with brownie.reverts():
+            strategy.rewardsTokens(0)
 
     # only gov can update rewards
-    with brownie.reverts():
-        strategy.updateRewards({"from": whale})
+    if which_strategy != 1:
+        with brownie.reverts():
+            strategy.updateRewards({"from": whale})
+    else:
+        with brownie.reverts():
+            strategy.updateRewards([], {"from": whale})
