@@ -68,8 +68,8 @@ def amount(token):
 def profit_whale(profit_amount, token):
     # ideally not the same whale as the main whale, or else they will lose money
     profit_whale = accounts.at(
-        "0xA169c91d692486b8C35E7E17De7D4be743920E37", force=True
-    )  # 0xA169c91d692486b8C35E7E17De7D4be743920E37, rETH pool, 10 tokens
+        "0x0BadCe9796CDaB3F3affBaF05F14a75c3Ac801bA", force=True
+    )  # 0x0BadCe9796CDaB3F3affBaF05F14a75c3Ac801bA, rETH pool, 7.7 tokens
     if token.balanceOf(profit_whale) < 5 * profit_amount:
         raise ValueError(
             "Our profit whale needs more funds. Find another whale or reduce your profit_amount variable."

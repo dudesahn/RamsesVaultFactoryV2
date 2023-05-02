@@ -192,7 +192,7 @@ contract BalancerGlobal {
     /// @notice Address of our Convex pool manager.
     /// @dev Used to add new pools to Convex.
     address public convexPoolManager =
-        0xf843F61508Fc17543412DE55B10ED87f4C28DE50;
+        0x2c809Ec701C088099c911AF9DdfA4A1Db6110F3c;
 
     /// @notice Yearn's vault registry address.
     IRegistry public registry;
@@ -689,9 +689,17 @@ contract BalancerGlobal {
             "Voter strategy already exists"
         );
 
-        // get convex pid. if doesn't have one, can't create one.
+        // get convex pid. if no pid create one
         uint256 pid = getPid(_gauge);
-        require(pid != type(uint256).max, "No Aura PID");
+        if (pid == type(uint256).max) {
+            //when we add the new pool it will be added to the end of the pools in convexDeposit.
+            pid = booster.poolLength();
+            //add pool
+            require(
+                IPoolManager(convexPoolManager).addPool(_gauge),
+                "Unable to add pool to Aura"
+            );
+        }
 
         if (_permissionedUser) {
             // allow trusted users to input the name and symbol or deploy a factory version of a legacy vault

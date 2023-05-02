@@ -1,6 +1,7 @@
 import brownie
 from brownie import Contract, ZERO_ADDRESS, interface, chain, accounts
 import math
+import pytest
 
 
 def test_vault_deployment(
@@ -67,12 +68,6 @@ def test_vault_deployment(
     answer = curve_global.doesStrategyProxyHaveGauge(gauge)
     print("Is this gauge already paired with a strategy on our proxy?", answer)
     assert not answer
-
-    # tenderly RPC can't do brownie.reverts
-    if not tests_using_tenderly:
-        with brownie.reverts():
-            curve_global.createNewVaultsAndStrategies(health_check, {"from": whale})
-        print("Can't create a vault for something that's not actually a gauge")
 
     # turn on keeps
     curve_global.setKeepCRV(69, curve_global.curveVoter(), {"from": gov})
@@ -177,11 +172,11 @@ def test_vault_deployment(
 
     if not tests_using_tenderly:
         # can't deploy another of the same vault permissionlessly
-        with brownie.reverts():
+        with brownie.reverts("Vault already exists"):
             tx = curve_global.createNewVaultsAndStrategies(gauge, {"from": whale})
 
         # we can't do our previously existing vault either
-        with brownie.reverts():
+        with brownie.reverts("Vault already exists"):
             tx = curve_global.createNewVaultsAndStrategies(fud_gauge, {"from": whale})
 
 
@@ -260,12 +255,17 @@ def test_permissioned_vault(
                 gauge, "poop", "poop", {"from": whale}
             )
 
-    # we can't create a vault for something that doesn't have a pid
     if not tests_using_tenderly:
-        with brownie.reverts("No Aura PID"):
+        with brownie.reverts():
             curve_global.createNewVaultsAndStrategiesPermissioned(
-                random_gauge_not_on_convex, "poop", "poop", {"from": gov}
+                health_check, "poop", "poop", {"from": curve_global.management()}
             )
+        print("Can't create a vault for something that's not actually a gauge")
+
+    # we can create a vault for something that doesn't have a pid (aura is not the case, they are too quick)
+    curve_global.createNewVaultsAndStrategiesPermissioned(
+        random_gauge_not_on_convex, "poop", "poop", {"from": gov}
+    )
 
     tx = curve_global.createNewVaultsAndStrategiesPermissioned(
         gauge, "stuff", "stuff", {"from": gov}
@@ -358,10 +358,10 @@ def test_permissioned_vault(
         chain.mine(1)
 
     if not tests_using_tenderly:
-        # we can't deploy another frax vault because we already have a strategy on our proxy for that gauge
-        with brownie.reverts():
+        # we can't deploy another curve vault because of our curve strategy
+        with brownie.reverts("Voter strategy already exists"):
             tx = curve_global.createNewVaultsAndStrategiesPermissioned(
-                gauge, "test2", "test2", {"from": gov}
+                gauge, "test2", "test2", {"from": curve_global.management()}
             )
 
 
@@ -384,10 +384,6 @@ def test_no_curve(
     tests_using_tenderly,
     fud_gauge,
 ):
-    # deploying curve global with frax strategies doesn't work unless with tenderly;
-    # ganache crashes because of the try-catch in the fraxPid function
-    # however, I usually do hacky coverage testing (commenting out section in curveGlobal)
-
     # once our factory is deployed, setup the factory from gov
     registry_owner = accounts.at(new_registry.owner(), force=True)
     new_registry.setApprovedVaultsOwner(curve_global, True, {"from": registry_owner})
@@ -429,7 +425,7 @@ def test_no_curve(
     curve_global.setCurveStratImplementation(ZERO_ADDRESS, {"from": gov})
 
     tx = curve_global.createNewVaultsAndStrategiesPermissioned(
-        gauge, "stuff", "stuff", {"from": curve_global.management()}
+        gauge, "stuff", "stuff", {"from": gov}
     )
     vault_address = tx.events["NewAutomatedVault"]["vault"]
     vault = Contract(vault_address)
@@ -496,13 +492,6 @@ def test_no_curve(
         print("New FUD vault deployed, vault/convex/curve", tx.return_value)
         chain.sleep(1)
         chain.mine(1)
-
-    if not tests_using_tenderly:
-        # we can't deploy another frax vault because we already have a strategy on our proxy for that gauge
-        with brownie.reverts():
-            tx = curve_global.createNewVaultsAndStrategiesPermissioned(
-                gauge, "test2", "test2", {"from": gov}
-            )
 
 
 def test_curve_global_setters_and_views(
