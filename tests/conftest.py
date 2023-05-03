@@ -48,8 +48,8 @@ def whale(amount, token):
     # Totally in it for the tech
     # Update this with a large holder of your want token (the largest EOA holder of LP)
     whale = accounts.at(
-        "0x79eF6103A513951a3b25743DB509E267685726B7", force=True
-    )  # 0x79eF6103A513951a3b25743DB509E267685726B7, rETH gauge, fine to use with convex, 40k tokens
+        "0x7818A1DA7BD1E64c199029E86Ba244a9798eEE10", force=True
+    )  # 0x7818A1DA7BD1E64c199029E86Ba244a9798eEE10, rETH gauge, fine to use with convex, 40k tokens. for curve strategy, use aura booster, 0x7818A1DA7BD1E64c199029E86Ba244a9798eEE10, 20
     if token.balanceOf(whale) < 2 * amount:
         raise ValueError(
             "Our whale needs more funds. Find another whale or reduce your amount variable."
@@ -407,7 +407,7 @@ def test_staking_address():
 # must be 0, 1, or 2 for convex, curve, and frax. Only test 2 (Frax) for pools that actually have frax (not balancer).
 @pytest.fixture(scope="session")
 def which_strategy():
-    which_strategy = 0
+    which_strategy = 1
     yield which_strategy
 
 

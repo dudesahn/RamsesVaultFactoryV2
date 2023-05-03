@@ -10,7 +10,7 @@ def harvest_strategy(
     gov,
     profit_whale,
     profit_amount,
-    destination_strategy,
+    target,
 ):
 
     # reset everything with a sleep and mine
@@ -36,12 +36,13 @@ def harvest_strategy(
         strategy.setDoHealthCheck(False, {"from": gov})
         print("\nTurned off health check!\n")
 
-    # when in emergency exit we don't enter prepare return, so we should manually claim rewards when withdrawing
-    if strategy.emergencyExit():
-        strategy.setClaimRewards(True, {"from": gov})
-    else:
-        if strategy.claimRewards():
-            strategy.setClaimRewards(False, {"from": gov})
+    # when in emergency exit we don't enter prepare return, so we should manually claim rewards when withdrawing for convex. curve auto-claims
+    if target == 0:
+        if strategy.emergencyExit():
+            strategy.setClaimRewards(True, {"from": gov})
+        else:
+            if strategy.claimRewards():
+                strategy.setClaimRewards(False, {"from": gov})
 
     # we can use the tx for debugging if needed
     tx = strategy.harvest({"from": gov})
@@ -53,7 +54,7 @@ def harvest_strategy(
 
     # our trade handler takes action, sending out rewards tokens and sending back in profit
     if use_yswaps:
-        trade_handler_action(strategy, token, gov, profit_whale, profit_amount)
+        trade_handler_action(strategy, token, gov, profit_whale, profit_amount, target)
 
     # reset everything with a sleep and mine
     chain.sleep(1)
@@ -70,11 +71,15 @@ def trade_handler_action(
     gov,
     profit_whale,
     profit_amount,
+    target,
 ):
     ####### ADD LOGIC AS NEEDED FOR SENDING REWARDS OUT AND PROFITS IN #######
     # get our tokens from our strategy
     crv = interface.IERC20(strategy.crv())
-    cvx = interface.IERC20(strategy.convexToken())
+    cvxBalance = 0
+    if target == 0:
+        cvx = interface.IERC20(strategy.convexToken())
+        cvxBalance = cvx.balanceOf(strategy)
 
     crvBalance = crv.balanceOf(strategy)
     if crvBalance > 0:
@@ -82,7 +87,6 @@ def trade_handler_action(
         print("CRV rewards present")
         assert crv.balanceOf(strategy) == 0
 
-    cvxBalance = cvx.balanceOf(strategy)
     if cvxBalance > 0:
         cvx.transfer(token, cvxBalance, {"from": strategy})
         print("CVX rewards present")
