@@ -20,8 +20,32 @@ interface IDetails {
     function symbol() external view returns (string memory);
 }
 
-contract StrategyCurveBoostedFactoryClonable is BaseStrategy {
+contract StrategyRamsesBoostedFactoryClonable is BaseStrategy {
     using SafeERC20 for IERC20;
+
+    // Tokens used
+    address public native;
+    address public output;
+    address public want;
+    address public lpToken0;
+    address public lpToken1;
+
+    // Third party contracts
+    address public gauge;
+    address public gaugeStaker;
+
+    address[] public rewards;
+
+    bool public stable;
+    bool public harvestOnDeposit;
+    bool public spiritHarvest;
+    uint256 public lastHarvest;
+
+    // Routes
+    ISolidlyRouter.Routes[] public outputToNativeRoute;
+    ISolidlyRouter.Routes[] public outputToLp0Route;
+    ISolidlyRouter.Routes[] public outputToLp1Route;
+    
     /* ========== STATE VARIABLES ========== */
 
     /// @notice Yearn's strategyProxy, needed for interacting with our Curve Voter.
@@ -41,17 +65,10 @@ contract StrategyCurveBoostedFactoryClonable is BaseStrategy {
 
     /// @notice The address of our base token (CRV for Curve, BAL for Balancer, etc.).
     IERC20 public constant crv =
-        IERC20(0xba100000625a3754423978a60c9317c58a424e3D);
+        IERC20(0xAAA6C1E32C55A7Bfa8066A6FAE9b42650F262418);
 
     // we use this to be able to adjust our strategy's name
     string internal stratName;
-
-    // ySwaps stuff
-    /// @notice The address of our ySwaps trade factory.
-    address public tradeFactory;
-
-    /// @notice Array of any extra rewards tokens this Convex pool may have.
-    address[] public rewardsTokens;
 
     /// @notice Will only be true on the original deployed contract and not on clones; we don't want to clone a clone.
     bool public isOriginal = true;
@@ -60,11 +77,10 @@ contract StrategyCurveBoostedFactoryClonable is BaseStrategy {
 
     constructor(
         address _vault,
-        address _tradeFactory,
         address _proxy,
         address _gauge
     ) BaseStrategy(_vault) {
-        _initializeStrat(_tradeFactory, _proxy, _gauge);
+        _initializeStrat(_proxy, _gauge);
     }
 
     /* ========== CLONING ========== */
@@ -77,7 +93,6 @@ contract StrategyCurveBoostedFactoryClonable is BaseStrategy {
     /// @param _strategist Address to grant the strategist role.
     /// @param _rewards If we have any strategist rewards, send them here.
     /// @param _keeper Address to grant the keeper role.
-    /// @param _tradeFactory Our trade factory address.
     /// @param _proxy Our strategy proxy address.
     /// @param _gauge Gauge address for this strategy.
     /// @return newStrategy Address of our new cloned strategy.
@@ -86,7 +101,6 @@ contract StrategyCurveBoostedFactoryClonable is BaseStrategy {
         address _strategist,
         address _rewards,
         address _keeper,
-        address _tradeFactory,
         address _proxy,
         address _gauge
     ) external returns (address newStrategy) {
@@ -117,7 +131,6 @@ contract StrategyCurveBoostedFactoryClonable is BaseStrategy {
             _strategist,
             _rewards,
             _keeper,
-            _tradeFactory,
             _proxy,
             _gauge
         );
@@ -131,7 +144,6 @@ contract StrategyCurveBoostedFactoryClonable is BaseStrategy {
     /// @param _strategist Address to grant the strategist role.
     /// @param _rewards If we have any strategist rewards, send them here.
     /// @param _keeper Address to grant the keeper role.
-    /// @param _tradeFactory Our trade factory address.
     /// @param _proxy Our strategy proxy address.
     /// @param _gauge Gauge address for this strategy.
     function initialize(
@@ -139,17 +151,15 @@ contract StrategyCurveBoostedFactoryClonable is BaseStrategy {
         address _strategist,
         address _rewards,
         address _keeper,
-        address _tradeFactory,
         address _proxy,
         address _gauge
     ) public {
         _initialize(_vault, _strategist, _rewards, _keeper);
-        _initializeStrat(_tradeFactory, _proxy, _gauge);
+        _initializeStrat(_proxy, _gauge);
     }
 
     // this is called by our original strategy, as well as any clones
     function _initializeStrat(
-        address _tradeFactory,
         address _proxy,
         address _gauge
     ) internal {
@@ -159,7 +169,6 @@ contract StrategyCurveBoostedFactoryClonable is BaseStrategy {
         }
 
         // 1:1 assignments
-        tradeFactory = _tradeFactory;
         proxy = ICurveStrategyProxy(_proxy); // our factory checks the latest proxy from curve voter and passes it here
         gauge = _gauge;
 
@@ -171,16 +180,50 @@ contract StrategyCurveBoostedFactoryClonable is BaseStrategy {
         maxReportDelay = 365 days;
         creditThreshold = 50_000e18;
 
-        // ySwaps setup
-        _setUpTradeFactory();
-
         // set our strategy's name
         stratName = string(
             abi.encodePacked(
-                "StrategyCurveBoostedFactory-",
+                "StrategyRamsesBoostedFactory-",
                 IDetails(address(want)).symbol()
             )
         );
+    }
+
+    function initialize(
+        address _want,
+        address _gauge,
+        address _gaugeStaker,
+        CommonAddresses calldata _commonAddresses,
+        ISolidlyRouter.Routes[] memory _outputToNativeRoute,
+        ISolidlyRouter.Routes[] memory _outputToLp0Route,
+        ISolidlyRouter.Routes[] memory _outputToLp1Route
+    ) public initializer  {
+        __StratFeeManager_init(_commonAddresses);
+        want = _want;
+        gauge = _gauge;
+        gaugeStaker = _gaugeStaker;
+
+        stable = ISolidlyPair(want).stable();
+
+        for (uint i; i < _outputToNativeRoute.length; ++i) {
+            outputToNativeRoute.push(_outputToNativeRoute[i]);
+        }
+
+        for (uint i; i < _outputToLp0Route.length; ++i) {
+            outputToLp0Route.push(_outputToLp0Route[i]);
+        }
+
+        for (uint i; i < _outputToLp1Route.length; ++i) {
+            outputToLp1Route.push(_outputToLp1Route[i]);
+        }
+
+        output = outputToNativeRoute[0].from;
+        native = outputToNativeRoute[outputToNativeRoute.length - 1].to;
+        lpToken0 = outputToLp0Route[outputToLp0Route.length - 1].to;
+        lpToken1 = outputToLp1Route[outputToLp1Route.length - 1].to;
+        rewards.push(output);
+
+        _giveAllowances();
     }
 
     /* ========== VIEWS ========== */
@@ -203,6 +246,63 @@ contract StrategyCurveBoostedFactoryClonable is BaseStrategy {
     /// @notice Total assets the strategy holds, sum of loose and staked want.
     function estimatedTotalAssets() public view override returns (uint256) {
         return balanceOfWant() + stakedBalance();
+    }
+
+    function _solidlyToRoute(ISolidlyRouter.Routes[] memory _route) internal pure returns (address[] memory) {
+        address[] memory route = new address[](_route.length + 1);
+        route[0] = _route[0].from;
+        for (uint i; i < _route.length; ++i) {
+            route[i + 1] = _route[i].to;
+        }
+        return route;
+    }
+
+    function outputToNative() external view returns (address[] memory) {
+        ISolidlyRouter.Routes[] memory _route = outputToNativeRoute;
+        return _solidlyToRoute(_route);
+    }
+
+    function outputToLp0() external view returns (address[] memory) {
+        ISolidlyRouter.Routes[] memory _route = outputToLp0Route;
+        return _solidlyToRoute(_route);
+    }
+
+    function outputToLp1() external view returns (address[] memory) {
+        ISolidlyRouter.Routes[] memory _route = outputToLp1Route;
+        return _solidlyToRoute(_route);
+    }
+
+    // calculate the total underlaying 'want' held by the strat.
+    function balanceOf() public view returns (uint256) {
+        return balanceOfWant() + balanceOfPool();
+    }
+
+    // it calculates how much 'want' this contract holds.
+    function balanceOfWant() public view returns (uint256) {
+        return IERC20(want).balanceOf(address(this));
+    }
+
+    // it calculates how much 'want' the strategy has working in the farm.
+    function balanceOfPool() public view returns (uint256) {
+        uint256 _amount = IGauge(gauge).balanceOf(gaugeStaker);
+        return _amount;
+    }
+
+    // returns rewards unharvested
+    function rewardsAvailable() public view returns (uint256) {
+        return spiritHarvest ? IGauge(gauge).earned(gaugeStaker) : IGauge(gauge).earned(output, gaugeStaker);
+    }
+
+    // native reward amount for calling harvest
+    function callReward() public view returns (uint256) {
+        IFeeConfig.FeeCategory memory fees = getFees();
+        uint256 outputBal = rewardsAvailable();
+        uint256 nativeOut;
+        if (outputBal > 0) {
+            (nativeOut,) = ISolidlyRouter(unirouter).getAmountOut(outputBal, output, native);
+        }
+
+        return nativeOut * fees.total / DIVISOR * fees.call / DIVISOR;
     }
 
     /* ========== CORE STRATEGY FUNCTIONS ========== */
@@ -275,6 +375,38 @@ contract StrategyCurveBoostedFactoryClonable is BaseStrategy {
                 _loss = debt - assets;
             }
         }
+    }
+
+    // Adds liquidity to AMM and gets more LP tokens.
+    function addLiquidity() internal {
+        uint256 outputBal = IERC20(output).balanceOf(address(this));
+        uint256 lp0Amt = outputBal / 2;
+        uint256 lp1Amt = outputBal - lp0Amt;
+
+        if (stable) {
+            uint256 lp0Decimals = 10**IERC20Extended(lpToken0).decimals();
+            uint256 lp1Decimals = 10**IERC20Extended(lpToken1).decimals();
+            uint256 out0 = ISolidlyRouter(unirouter).getAmountsOut(lp0Amt, outputToLp0Route)[outputToLp0Route.length] * 1e18 / lp0Decimals;
+            uint256 out1 = ISolidlyRouter(unirouter).getAmountsOut(lp1Amt, outputToLp1Route)[outputToLp1Route.length] * 1e18 / lp1Decimals;
+            (uint256 amountA, uint256 amountB,) = ISolidlyRouter(unirouter).quoteAddLiquidity(lpToken0, lpToken1, stable, out0, out1);
+            amountA = amountA * 1e18 / lp0Decimals;
+            amountB = amountB * 1e18 / lp1Decimals;
+            uint256 ratio = out0 * 1e18 / out1 * amountB / amountA;
+            lp0Amt = outputBal * 1e18 / (ratio + 1e18);
+            lp1Amt = outputBal - lp0Amt;
+        }
+
+        if (lpToken0 != output) {
+            ISolidlyRouter(unirouter).swapExactTokensForTokens(lp0Amt, 0, outputToLp0Route, address(this), block.timestamp);
+        }
+
+        if (lpToken1 != output) {
+            ISolidlyRouter(unirouter).swapExactTokensForTokens(lp1Amt, 0, outputToLp1Route, address(this), block.timestamp);
+        }
+
+        uint256 lp0Bal = IERC20(lpToken0).balanceOf(address(this));
+        uint256 lp1Bal = IERC20(lpToken1).balanceOf(address(this));
+        ISolidlyRouter(unirouter).addLiquidity(lpToken0, lpToken1, stable, lp0Bal, lp1Bal, 1, 1, address(this), block.timestamp);
     }
 
     function adjustPosition(uint256 _debtOutstanding) internal override {

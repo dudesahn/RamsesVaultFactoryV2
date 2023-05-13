@@ -160,7 +160,7 @@ interface Vault {
     function addStrategy(address, uint256, uint256, uint256, uint256) external;
 }
 
-contract BalancerGlobal {
+contract RamsesGlobal {
     event NewAutomatedVault(
         uint256 indexed category,
         address indexed lpToken,
@@ -176,8 +176,8 @@ contract BalancerGlobal {
     address[] public deployedVaults;
 
     /// @notice This is specific to the protocol we are deploying automated vaults for.
-    /// @dev 0 for curve, 1 for balancer. This is a subcategory within our vault type AUTOMATED on the registry.
-    uint256 public constant CATEGORY = 1;
+    /// @dev 0 for curve, 1 for balancer, 2 for ramses. This is a subcategory within our vault type AUTOMATED on the registry.
+    uint256 public constant CATEGORY = 2;
 
     /// @notice Owner of the factory.
     address public owner;
@@ -185,14 +185,6 @@ contract BalancerGlobal {
     // @notice Pending owner of the factory.
     /// @dev Must accept before becoming owner.
     address public pendingOwner;
-
-    /// @notice Address of our Convex token.
-    address public constant CVX = 0xC0c293ce456fF0ED870ADd98a0828Dd4d2903DBF;
-
-    /// @notice Address of our Convex pool manager.
-    /// @dev Used to add new pools to Convex.
-    address public convexPoolManager =
-        0x2c809Ec701C088099c911AF9DdfA4A1Db6110F3c;
 
     /// @notice Yearn's vault registry address.
     IRegistry public registry;

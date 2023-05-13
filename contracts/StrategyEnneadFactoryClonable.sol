@@ -78,7 +78,7 @@ interface IConvexDeposit {
     ) external view returns (address, address, address, address, address, bool);
 }
 
-contract StrategyConvexFactoryClonable is BaseStrategy {
+contract StrategyEnneadFactoryClonable is BaseStrategy {
     using SafeERC20 for IERC20;
 
     /* ========== STATE VARIABLES ========== */
