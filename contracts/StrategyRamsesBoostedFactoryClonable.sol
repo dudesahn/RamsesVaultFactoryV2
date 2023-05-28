@@ -43,8 +43,8 @@ contract StrategyRamsesBoostedFactoryClonable is BaseStrategy {
 
     // Routes
     ISolidlyRouter.Routes[] public outputToNativeRoute;
-    ISolidlyRouter.Routes[] public outputToLp0Route;
-    ISolidlyRouter.Routes[] public outputToLp1Route;
+    ISolidlyRouter.Routes[] public routeToken0;
+    ISolidlyRouter.Routes[] public routeToken1;
     
     /* ========== STATE VARIABLES ========== */
 
@@ -192,18 +192,14 @@ contract StrategyRamsesBoostedFactoryClonable is BaseStrategy {
     function initialize(
         address _want,
         address _gauge,
-        address _gaugeStaker,
-        CommonAddresses calldata _commonAddresses,
         ISolidlyRouter.Routes[] memory _outputToNativeRoute,
         ISolidlyRouter.Routes[] memory _outputToLp0Route,
         ISolidlyRouter.Routes[] memory _outputToLp1Route
     ) public initializer  {
-        __StratFeeManager_init(_commonAddresses);
         want = _want;
         gauge = _gauge;
-        gaugeStaker = _gaugeStaker;
 
-        stable = ISolidlyPair(want).stable();
+        stable = ISolidlyPair(_want).stable();
 
         for (uint i; i < _outputToNativeRoute.length; ++i) {
             outputToNativeRoute.push(_outputToNativeRoute[i]);
@@ -315,32 +311,31 @@ contract StrategyRamsesBoostedFactoryClonable is BaseStrategy {
         returns (uint256 _profit, uint256 _loss, uint256 _debtPayment)
     {
         // rewards will be converted later with mev protection by yswaps (tradeFactory)
-        // if we have anything in the gauge, then harvest CRV from the gauge
-        uint256 _stakedBal = stakedBalance();
-        if (_stakedBal > 0) {
-            proxy.harvest(gauge);
-
-            // by default this is zero, but if we want any for our voter this will be used
-            uint256 _localKeepCRV = localKeepCRV;
-            address _curveVoter = curveVoter;
-            if (_localKeepCRV > 0 && _curveVoter != address(0)) {
-                uint256 crvBalance = crv.balanceOf(address(this));
-                uint256 _sendToVoter;
-                unchecked {
-                    _sendToVoter =
-                        (crvBalance * _localKeepCRV) /
-                        FEE_DENOMINATOR;
-                }
-                if (_sendToVoter > 0) {
-                    crv.safeTransfer(_curveVoter, _sendToVoter);
-                }
-            }
+        
+        // claim our rewards
+        IGaugeStaker(gaugeStaker).claimGaugeReward(gauge)
+        
+        // sell rewards for more want, have to add from both sides
+        uint256 ramBalance = ram.balanceOf(address(this));
+        uint256 amountToSwapToken0 = ramBalance / 2;
+        uint256 amountToSwapToken1 = ramBalance - amountToken0;
+        
+        // if stable, do some more fancy math
+        if (isStablePair) {
+            (amountToSwapToken0, amountToSwapToken1) = _doStableMath(ramBalance, amountToSwapToken0, amountToSwapToken1);
         }
 
-        // claim any extra rewards we may have
-        if (rewardsTokens.length > 0) {
-            proxy.claimManyRewards(gauge, rewardsTokens);
+        if (address(token0) != address(ram)) {
+            ISolidlyRouter(unirouter).swapExactTokensForTokens(amountToSwapToken0, 0, routeToken0, address(this), block.timestamp);
         }
+
+        if (address(token1) != address(ram)) {
+            ISolidlyRouter(unirouter).swapExactTokensForTokens(amountToSwapToken1, 0, routeToken1, address(this), block.timestamp);
+        }
+
+        uint256 balanceToken0 = token0.balanceOf(address(this));
+        uint256 balanceToken1 = token1.balanceOf(address(this));
+        router.addLiquidity(address(token0), address(token1), isStablePair, balanceToken0, balanceToken1, 1, 1, address(this), block.timestamp);
 
         // serious loss should never happen, but if it does (for instance, if Curve is hacked), let's record it accurately
         uint256 assets = estimatedTotalAssets();
@@ -378,35 +373,20 @@ contract StrategyRamsesBoostedFactoryClonable is BaseStrategy {
     }
 
     // Adds liquidity to AMM and gets more LP tokens.
-    function addLiquidity() internal {
-        uint256 outputBal = IERC20(output).balanceOf(address(this));
-        uint256 lp0Amt = outputBal / 2;
-        uint256 lp1Amt = outputBal - lp0Amt;
-
-        if (stable) {
-            uint256 lp0Decimals = 10**IERC20Extended(lpToken0).decimals();
-            uint256 lp1Decimals = 10**IERC20Extended(lpToken1).decimals();
-            uint256 out0 = ISolidlyRouter(unirouter).getAmountsOut(lp0Amt, outputToLp0Route)[outputToLp0Route.length] * 1e18 / lp0Decimals;
-            uint256 out1 = ISolidlyRouter(unirouter).getAmountsOut(lp1Amt, outputToLp1Route)[outputToLp1Route.length] * 1e18 / lp1Decimals;
-            (uint256 amountA, uint256 amountB,) = ISolidlyRouter(unirouter).quoteAddLiquidity(lpToken0, lpToken1, stable, out0, out1);
-            amountA = amountA * 1e18 / lp0Decimals;
-            amountB = amountB * 1e18 / lp1Decimals;
-            uint256 ratio = out0 * 1e18 / out1 * amountB / amountA;
-            lp0Amt = outputBal * 1e18 / (ratio + 1e18);
-            lp1Amt = outputBal - lp0Amt;
-        }
-
-        if (lpToken0 != output) {
-            ISolidlyRouter(unirouter).swapExactTokensForTokens(lp0Amt, 0, outputToLp0Route, address(this), block.timestamp);
-        }
-
-        if (lpToken1 != output) {
-            ISolidlyRouter(unirouter).swapExactTokensForTokens(lp1Amt, 0, outputToLp1Route, address(this), block.timestamp);
-        }
-
-        uint256 lp0Bal = IERC20(lpToken0).balanceOf(address(this));
-        uint256 lp1Bal = IERC20(lpToken1).balanceOf(address(this));
-        ISolidlyRouter(unirouter).addLiquidity(lpToken0, lpToken1, stable, lp0Bal, lp1Bal, 1, 1, address(this), block.timestamp);
+    function _doStableMath(uint256 _ramBalance, uint256 _token0Amount, uint256 _token1Amount) internal return (uint256, uint256) {
+        uint256 decimalsToken0 = 10**token0.decimals();
+        uint256 decimalsToken1 = 10**token1.decimals();
+        
+        // get our anticipated amounts out
+        uint256 amountsOut0 = router.getAmountsOut(_token0Amount, outputToLp0Route)[outputToLp0Route.length] * 1e18 / decimalsToken0;
+        uint256 amountsOut1 = router.getAmountsOut(_token1Amount, outputToLp1Route)[outputToLp1Route.length] * 1e18 / decimalsToken1;
+        (uint256 amountA, uint256 amountB,) = router.quoteAddLiquidity(address(token0), address(token1), true, amountsOut0, amountsOut1);
+        amountA = amountA * 1e18 / lp0Decimals;
+        amountB = amountB * 1e18 / lp1Decimals;
+        uint256 ratio = amountsOut0 * 1e18 / amountsOut1 * amountB / amountA;
+        amountsOut0 = _ramBalance * 1e18 / (ratio + 1e18);
+        amountsOut1 = _ramBalance - amountsOut0;
+        return (amountsOut0, amountsOut1);     
     }
 
     function adjustPosition(uint256 _debtOutstanding) internal override {
