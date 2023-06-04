@@ -41,7 +41,7 @@ interface FeeDistribution {
     function getUserTimeCursor(address user) external view returns (uint256);
 }
 
-contract StrategyProxy {
+contract StrategyProxyRamsesV1 {
     using SafeERC20 for IERC20;
     // using Address for address;
     using SafeProxy for IProxy;
@@ -49,31 +49,30 @@ contract StrategyProxy {
     uint256 private constant WEEK = 604800; // Number of seconds in a week
 
     /// @notice Yearn's voter proxy. Typically referred to as "voter".
-    IProxy public constant proxy = IProxy(0xBA11E7024cbEB1dd2B401C70A83E0d964144686C);
+    IProxy public constant proxy = IProxy();
 
-    /// @notice Balancer's token minter.
-    address public constant mintr = 0x239e55F427D44C3cc793f49bFB507ebe76638a2b;
+    /// @notice Ramses' token minter.
+    address public constant mintr = ;
 
-    /// @notice Balancer's BAL token address.
-    address public constant bal = 0xba100000625a3754423978a60c9317c58a424e3D;
+    /// @notice Ramses' RAM token address.
+    address public constant ram = ;
+    
+    
+    // claimFees and claimBribes will only be used by the yRAM part of things, though claimFees seems to do both? 
+    // claimRewards used by LP strategy (exclusively claims RAM)
+    
 
-    /// @notice Curve's BAL/WETH token address.
-    address public constant balweth = 0x5c6Ee304399DBdB9C8Ef030aB642B10820DB8F56;
+    /// @notice Recipient of weekly bb-a-USD admin fees. Default of st-yRAM strategy address.
+    address public feeRecipient = ; // incorrect - st-yRAM strat yet to be deployed
 
-    /// @notice Recipient of weekly bb-a-USD admin fees. Default of st-yBAL strategy address.
-    address public feeRecipient = 0x93A62dA5a14C80f265DAbC077fCEE437B1a0Efde; // incorrect - st-yBAL strat yet to be deployed
+    /// @notice Ramses' voter contract.
+    IVoter public constant voter = IVoter();
 
-    /// @notice Balancer's fee distributor contract.
-    FeeDistribution public constant feeDistribution = FeeDistribution(0xD3cf852898b21fc233251427c2DC93d3d604F3BB);
-
-    /// @notice Balancer's vote-escrowed BAL address.
-    VeBAL public constant veBAL  = VeBAL(0xC128a9954e6c874eA3d62ce62B468bA073093F25);
+    /// @notice Ramses' vote-escrowed RAM address.
+    IveToken public constant veRAM  = IveToken();
 
     /// @notice Balancer's gauge controller.
     IGaugeController public constant gaugeController = IGaugeController(0xC128468b7Ce63eA702C1f104D55A2566b13D3ABD);
-
-    /// @notice The token Balancer pays fees in.
-    address public feeToken = 0xA13a9247ea42D743238089903570127DdA72fE44;
 
     /// @notice Look up the strategy approved for a given Balancer gauge.
     mapping(address => address) public strategies;
@@ -361,7 +360,17 @@ contract StrategyProxy {
     /// @dev Admin fees become available every Thursday, so we run this expensive
     ///  logic only once per week. May only be called by feeRecipient.
     /// @param _recipient The address to which we transfer BAL and bb-a-USD.
-    function claim(address _recipient) external {
+    function claimBribesAndFees() external {
+    
+        // maybe just claim here
+        
+        // tbh should swap here as well so we don't have to transferFrom tons of assets to the strategy
+        // swap here an asset -> RAM and send to st-yRAM strategy (have voter do it, call from here)
+        
+        // probably check a list of added pools to know which tokens to check for in bribes/fees
+        // leave in some manual methods to manually override how many pools or tokens to check?
+        
+        
         require(msg.sender == feeRecipient, "!approved");
         if (!claimable()) return;
 

@@ -22,50 +22,34 @@ interface IDetails {
 
 contract StrategyRamsesBoostedFactoryClonable is BaseStrategy {
     using SafeERC20 for IERC20;
-
-    // Tokens used
-    address public native;
-    address public output;
-    address public want;
-    address public lpToken0;
-    address public lpToken1;
-
-    // Third party contracts
-    address public gauge;
-    address public gaugeStaker;
-
-    address[] public rewards;
-
-    bool public stable;
-    bool public harvestOnDeposit;
-    bool public spiritHarvest;
-    uint256 public lastHarvest;
-
-    // Routes
-    ISolidlyRouter.Routes[] public outputToNativeRoute;
-    ISolidlyRouter.Routes[] public routeToken0;
-    ISolidlyRouter.Routes[] public routeToken1;
     
     /* ========== STATE VARIABLES ========== */
 
-    /// @notice Yearn's strategyProxy, needed for interacting with our Curve Voter.
+    /// @notice Yearn's strategyProxy, needed for interacting with our Ramses Voter.
     ICurveStrategyProxy public proxy;
 
-    /// @notice Curve gauge contract, most are tokenized, held by Yearn's voter.
+    /// @notice Ramses gauge contract
     address public gauge;
 
-    /// @notice The percentage of CRV from each harvest that we send to our voter (out of 10,000).
-    uint256 public localKeepCRV;
+    /// @notice The percentage of RAM from each harvest that we send to our voter (out of 10,000).
+    uint256 public localKeepRAM;
 
-    /// @notice The address of our Curve voter. This is where we send any keepCRV.
-    address public curveVoter;
+    /// @notice The address of our Ramses voter. This is where we send any keepRAM.
+    address public ramVoter;
 
     // this means all of our fee values are in basis points
     uint256 internal constant FEE_DENOMINATOR = 10000;
 
-    /// @notice The address of our base token (CRV for Curve, BAL for Balancer, etc.).
-    IERC20 public constant crv =
+    /// @notice The address of our base token
+    IERC20 public constant ram =
         IERC20(0xAAA6C1E32C55A7Bfa8066A6FAE9b42650F262418);
+
+    // info our router needs for swap paths. this is why only trusted accounts may deploy.
+    address public lpToken0;
+    address public lpToken1;
+    bool public isStablePair;
+    ISolidlyRouter.Routes[] public token0Route;
+    ISolidlyRouter.Routes[] public token1Route;
 
     // we use this to be able to adjust our strategy's name
     string internal stratName;
@@ -96,13 +80,15 @@ contract StrategyRamsesBoostedFactoryClonable is BaseStrategy {
     /// @param _proxy Our strategy proxy address.
     /// @param _gauge Gauge address for this strategy.
     /// @return newStrategy Address of our new cloned strategy.
-    function cloneStrategyCurveBoosted(
+    function cloneStrategyRamsesBoosted(
         address _vault,
         address _strategist,
         address _rewards,
         address _keeper,
         address _proxy,
-        address _gauge
+        address _gauge,
+        ISolidlyRouter.Routes[] memory _ramRouteToToken0,
+        ISolidlyRouter.Routes[] memory _ramRouteToToken1
     ) external returns (address newStrategy) {
         // don't clone a clone
         if (!isOriginal) {
@@ -132,7 +118,9 @@ contract StrategyRamsesBoostedFactoryClonable is BaseStrategy {
             _rewards,
             _keeper,
             _proxy,
-            _gauge
+            _gauge,
+            _ramRouteToToken0,
+            _ramRouteToToken1
         );
 
         emit Cloned(newStrategy);
@@ -152,16 +140,20 @@ contract StrategyRamsesBoostedFactoryClonable is BaseStrategy {
         address _rewards,
         address _keeper,
         address _proxy,
-        address _gauge
+        address _gauge,
+        ISolidlyRouter.Routes[] memory _ramRouteToToken0,
+        ISolidlyRouter.Routes[] memory _ramRouteToToken1
     ) public {
         _initialize(_vault, _strategist, _rewards, _keeper);
-        _initializeStrat(_proxy, _gauge);
+        _initializeStrat(_proxy, _gauge, _ramRouteToToken0, _ramRouteToToken1);
     }
 
     // this is called by our original strategy, as well as any clones
     function _initializeStrat(
         address _proxy,
-        address _gauge
+        address _gauge,
+        ISolidlyRouter.Routes[] memory _ramRouteToToken0,
+        ISolidlyRouter.Routes[] memory _ramRouteToToken1
     ) internal {
         // make sure that we haven't initialized this before
         if (gauge != address(0)) {
@@ -171,14 +163,29 @@ contract StrategyRamsesBoostedFactoryClonable is BaseStrategy {
         // 1:1 assignments
         proxy = ICurveStrategyProxy(_proxy); // our factory checks the latest proxy from curve voter and passes it here
         gauge = _gauge;
+        isStablePair = ISolidlyPair(address(want)).stable();
+
+
+        for (uint i; i < _ramRouteToToken0.length; ++i) {
+            ramRouteToToken0.push(_ramRouteToToken0[i]);
+        }
+
+        for (uint i; i < _ramRouteToToken1.length; ++i) {
+            ramRouteToToken1.push(_ramRouteToToken1[i]);
+        }
+
+        lpToken0 = ramRouteToToken0[ramRouteToToken0.length - 1].to;
+        lpToken1 = ramRouteToToken1[ramRouteToToken1.length - 1].to;
+
+        // set up our baseStrategy vars
+        maxReportDelay = 365 days;
+        creditThreshold = 50_000e18;
 
         // want = Curve LP
         want.approve(_proxy, type(uint256).max);
-
-        // set up our baseStrategy vars
-        minReportDelay = 21 days;
-        maxReportDelay = 365 days;
-        creditThreshold = 50_000e18;
+        IERC20(lpToken0).approve(address(router), type(uint256).max);
+        IERC20(lpToken0).approve(address(router), type(uint256).max);
+        ram.approve(address(router), type(uint256).max);
 
         // set our strategy's name
         stratName = string(
@@ -187,39 +194,6 @@ contract StrategyRamsesBoostedFactoryClonable is BaseStrategy {
                 IDetails(address(want)).symbol()
             )
         );
-    }
-
-    function initialize(
-        address _want,
-        address _gauge,
-        ISolidlyRouter.Routes[] memory _outputToNativeRoute,
-        ISolidlyRouter.Routes[] memory _outputToLp0Route,
-        ISolidlyRouter.Routes[] memory _outputToLp1Route
-    ) public initializer  {
-        want = _want;
-        gauge = _gauge;
-
-        stable = ISolidlyPair(_want).stable();
-
-        for (uint i; i < _outputToNativeRoute.length; ++i) {
-            outputToNativeRoute.push(_outputToNativeRoute[i]);
-        }
-
-        for (uint i; i < _outputToLp0Route.length; ++i) {
-            outputToLp0Route.push(_outputToLp0Route[i]);
-        }
-
-        for (uint i; i < _outputToLp1Route.length; ++i) {
-            outputToLp1Route.push(_outputToLp1Route[i]);
-        }
-
-        output = outputToNativeRoute[0].from;
-        native = outputToNativeRoute[outputToNativeRoute.length - 1].to;
-        lpToken0 = outputToLp0Route[outputToLp0Route.length - 1].to;
-        lpToken1 = outputToLp1Route[outputToLp1Route.length - 1].to;
-        rewards.push(output);
-
-        _giveAllowances();
     }
 
     /* ========== VIEWS ========== */
@@ -243,6 +217,10 @@ contract StrategyRamsesBoostedFactoryClonable is BaseStrategy {
     function estimatedTotalAssets() public view override returns (uint256) {
         return balanceOfWant() + stakedBalance();
     }
+    
+    function claimableRewards() public view returns (uint256) {
+        gauge.earned(proxy.voter());
+    }
 
     function _solidlyToRoute(ISolidlyRouter.Routes[] memory _route) internal pure returns (address[] memory) {
         address[] memory route = new address[](_route.length + 1);
@@ -253,52 +231,14 @@ contract StrategyRamsesBoostedFactoryClonable is BaseStrategy {
         return route;
     }
 
-    function outputToNative() external view returns (address[] memory) {
-        ISolidlyRouter.Routes[] memory _route = outputToNativeRoute;
+    function ramRouteToToken0() external view returns (address[] memory) {
+        ISolidlyRouter.Routes[] memory _route = ramRouteToToken0;
         return _solidlyToRoute(_route);
     }
 
-    function outputToLp0() external view returns (address[] memory) {
-        ISolidlyRouter.Routes[] memory _route = outputToLp0Route;
+    function ramRouteToToken1() external view returns (address[] memory) {
+        ISolidlyRouter.Routes[] memory _route = ramRouteToToken1;
         return _solidlyToRoute(_route);
-    }
-
-    function outputToLp1() external view returns (address[] memory) {
-        ISolidlyRouter.Routes[] memory _route = outputToLp1Route;
-        return _solidlyToRoute(_route);
-    }
-
-    // calculate the total underlaying 'want' held by the strat.
-    function balanceOf() public view returns (uint256) {
-        return balanceOfWant() + balanceOfPool();
-    }
-
-    // it calculates how much 'want' this contract holds.
-    function balanceOfWant() public view returns (uint256) {
-        return IERC20(want).balanceOf(address(this));
-    }
-
-    // it calculates how much 'want' the strategy has working in the farm.
-    function balanceOfPool() public view returns (uint256) {
-        uint256 _amount = IGauge(gauge).balanceOf(gaugeStaker);
-        return _amount;
-    }
-
-    // returns rewards unharvested
-    function rewardsAvailable() public view returns (uint256) {
-        return spiritHarvest ? IGauge(gauge).earned(gaugeStaker) : IGauge(gauge).earned(output, gaugeStaker);
-    }
-
-    // native reward amount for calling harvest
-    function callReward() public view returns (uint256) {
-        IFeeConfig.FeeCategory memory fees = getFees();
-        uint256 outputBal = rewardsAvailable();
-        uint256 nativeOut;
-        if (outputBal > 0) {
-            (nativeOut,) = ISolidlyRouter(unirouter).getAmountOut(outputBal, output, native);
-        }
-
-        return nativeOut * fees.total / DIVISOR * fees.call / DIVISOR;
     }
 
     /* ========== CORE STRATEGY FUNCTIONS ========== */
@@ -310,34 +250,51 @@ contract StrategyRamsesBoostedFactoryClonable is BaseStrategy {
         override
         returns (uint256 _profit, uint256 _loss, uint256 _debtPayment)
     {
-        // rewards will be converted later with mev protection by yswaps (tradeFactory)
-        
-        // claim our rewards
-        IGaugeStaker(gaugeStaker).claimGaugeReward(gauge)
+        // if we have anything in the gauge, then harvest RAM from the gauge
+        uint256 _stakedBal = stakedBalance();
+        if (_stakedBal > 0) {
+            proxy.harvest(gauge);
+
+            // by default this is zero, but if we want any for our voter this will be used
+            uint256 _localKeepRAM = localKeepRAM;
+            address _ramVoter = ramVoter;
+            if (_localKeepRAM > 0 && _ramVoter != address(0)) {
+                uint256 ramBalance = ram.balanceOf(address(this));
+                uint256 _sendToVoter;
+                unchecked {
+                    _sendToVoter =
+                        (ramBalance * _localKeepCRV) /
+                        FEE_DENOMINATOR;
+                }
+                if (_sendToVoter > 0) {
+                    ram.safeTransfer(_ramVoter, _sendToVoter);
+                }
+            }
+        }
         
         // sell rewards for more want, have to add from both sides
         uint256 ramBalance = ram.balanceOf(address(this));
         uint256 amountToSwapToken0 = ramBalance / 2;
         uint256 amountToSwapToken1 = ramBalance - amountToken0;
         
-        // if stable, do some more fancy math
+        // if stable, do some more fancy math, not as easy as swapping half
         if (isStablePair) {
             (amountToSwapToken0, amountToSwapToken1) = _doStableMath(ramBalance, amountToSwapToken0, amountToSwapToken1);
         }
 
         if (address(token0) != address(ram)) {
-            ISolidlyRouter(unirouter).swapExactTokensForTokens(amountToSwapToken0, 0, routeToken0, address(this), block.timestamp);
+            router.swapExactTokensForTokens(amountToSwapToken0, 0, routeToken0, address(this), block.timestamp);
         }
 
         if (address(token1) != address(ram)) {
-            ISolidlyRouter(unirouter).swapExactTokensForTokens(amountToSwapToken1, 0, routeToken1, address(this), block.timestamp);
+            router.swapExactTokensForTokens(amountToSwapToken1, 0, routeToken1, address(this), block.timestamp);
         }
 
         uint256 balanceToken0 = token0.balanceOf(address(this));
         uint256 balanceToken1 = token1.balanceOf(address(this));
         router.addLiquidity(address(token0), address(token1), isStablePair, balanceToken0, balanceToken1, 1, 1, address(this), block.timestamp);
 
-        // serious loss should never happen, but if it does (for instance, if Curve is hacked), let's record it accurately
+        // serious loss should never happen, but if it does (for instance, if Ramses is hacked), let's record it accurately
         uint256 assets = estimatedTotalAssets();
         uint256 debt = vault.strategies(address(this)).totalDebt;
 
@@ -378,8 +335,8 @@ contract StrategyRamsesBoostedFactoryClonable is BaseStrategy {
         uint256 decimalsToken1 = 10**token1.decimals();
         
         // get our anticipated amounts out
-        uint256 amountsOut0 = router.getAmountsOut(_token0Amount, outputToLp0Route)[outputToLp0Route.length] * 1e18 / decimalsToken0;
-        uint256 amountsOut1 = router.getAmountsOut(_token1Amount, outputToLp1Route)[outputToLp1Route.length] * 1e18 / decimalsToken1;
+        uint256 amountsOut0 = router.getAmountsOut(_token0Amount, ramRouteToToken0)[ramRouteToToken0.length] * 1e18 / decimalsToken0;
+        uint256 amountsOut1 = router.getAmountsOut(_token1Amount, ramRouteToToken1)[ramRouteToToken1.length] * 1e18 / decimalsToken1;
         (uint256 amountA, uint256 amountB,) = router.quoteAddLiquidity(address(token0), address(token1), true, amountsOut0, amountsOut1);
         amountA = amountA * 1e18 / lp0Decimals;
         amountB = amountB * 1e18 / lp1Decimals;
