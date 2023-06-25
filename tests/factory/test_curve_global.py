@@ -19,6 +19,8 @@ def test_vault_deployment(
     tests_using_tenderly,
     keeper_wrapper,
     amount,
+    route0,
+    route1,
 ):
     # once our factory is deployed, setup the factory from gov
     registry_owner = accounts.at(new_registry.owner(), force=True)
@@ -44,7 +46,9 @@ def test_vault_deployment(
         "Set our global keeps, don't mess with curve voter or we will revert on deploy"
     )
 
-    tx = velo_global.createNewVaultsAndStrategies(gauge, {"from": whale})
+    tx = velo_global.createNewVaultsAndStrategies(
+        gauge, route0, route1, {"from": whale}
+    )
     assert velo_global.latestStandardVaultFromGauge(gauge) != ZERO_ADDRESS
 
     vault_address = tx.events["NewAutomatedVault"]["vault"]
@@ -55,10 +59,6 @@ def test_vault_deployment(
     info = tx.events["NewAutomatedVault"]
 
     print("Here's our new vault created event:", info, "\n")
-
-    # print our addresses
-    cvx_strat = tx.events["NewAutomatedVault"]["convexStrategy"]
-    convex_strategy = StrategyConvexFactoryClonable.at(cvx_strat)
 
     # check that everything is setup properly for our vault
     assert vault.governance() == velo_global.address
@@ -71,31 +71,11 @@ def test_vault_deployment(
     assert vault.performanceFee() == velo_global.performanceFee()
 
     # check that things are good on our strategies
-    # convex
-    assert vault.withdrawalQueue(0) == cvx_strat
-    assert vault.strategies(cvx_strat)["performanceFee"] == 0
-    assert convex_strategy.creditThreshold() == 5e22  # 50k
-    assert convex_strategy.healthCheck() == velo_global.healthCheck()
-    assert (
-        convex_strategy.harvestProfitMaxInUsdc() == velo_global.harvestProfitMaxInUsdc()
-    )
-    assert (
-        convex_strategy.harvestProfitMinInUsdc() == velo_global.harvestProfitMinInUsdc()
-    )
-    assert convex_strategy.healthCheck() == velo_global.healthCheck()
-    assert convex_strategy.localkeepVELO() == velo_global.keepVELO()
-    assert convex_strategy.localKeepCVX() == velo_global.keepCVX()
-    assert convex_strategy.veloVoter() == velo_global.veloVoter()
-    assert convex_strategy.convexVoter() == velo_global.convexVoter()
-    assert convex_strategy.rewards() == velo_global.treasury()
-    assert convex_strategy.strategist() == velo_global.management()
-    assert convex_strategy.keeper() == velo_global.keeper()
-
-    curve_strat = tx.events["NewAutomatedVault"]["curveStrategy"]
+    curve_strat = tx.events["NewAutomatedVault"]["veloStrategy"]
     if curve_strat != ZERO_ADDRESS:
         curve_strategy = StrategyVelodromeClonable.at(curve_strat)
         # curve
-        assert vault.withdrawalQueue(1) == curve_strat
+        assert vault.withdrawalQueue(0) == curve_strat
         assert vault.strategies(curve_strat)["performanceFee"] == 0
         assert curve_strategy.creditThreshold() == 5e22
         assert curve_strategy.healthCheck() == velo_global.healthCheck()
@@ -114,7 +94,6 @@ def test_vault_deployment(
         "Check out our keeper wrapper, make sure it works as intended for all strategies"
     )
     rando = accounts[5]
-    assert convex_strategy.keeper() == keeper_wrapper
     assert curve_strategy.keeper() == keeper_wrapper
     ## deposit to the vault after approving
     startingWhale = token.balanceOf(whale)
@@ -147,7 +126,6 @@ def test_vault_deployment(
 
 
 def test_permissioned_vault(
-    StrategyConvexFactoryClonable,
     StrategyVelodromeClonable,
     strategist,
     velo_global,
@@ -155,16 +133,12 @@ def test_permissioned_vault(
     guardian,
     token,
     health_check,
-    pid,
     base_fee_oracle,
     new_registry,
     gauge,
-    new_proxy,
     voter,
     whale,
     tests_using_tenderly,
-    fud_gauge,
-    random_gauge_not_on_convex,
 ):
     # deploying curve global with frax strategies doesn't work unless with tenderly;
     # ganache crashes because of the try-catch in the fraxPid function
@@ -181,25 +155,9 @@ def test_permissioned_vault(
     assert velo_global.registry() == new_registry.address
     print("Our factory can endorse vaults")
 
-    _pid = velo_global.getPid(gauge)
-    assert _pid == pid
-    print("\nOur pid workup works, pid:", pid)
-
-    # update the strategy on our voter
-    voter.setStrategy(new_proxy.address, {"from": gov})
-
-    # set our factory address on the strategy proxy
-    new_proxy.setFactory(velo_global.address, {"from": gov})
-    print("New proxy updated, factory added to proxy")
     print("Let's deploy this vault")
     print("Factory address: ", velo_global)
     print("Gauge: ", gauge)
-
-    # check if our current gauge has a strategy for it, but mostly just do this to update our proxy
-    print(
-        "Here is our strategy for the gauge (likely 0x000):",
-        new_proxy.strategies(gauge),
-    )
 
     # check if we can create this vault permissionlessly
     print(
@@ -256,38 +214,13 @@ def test_permissioned_vault(
 
     print("Here's our new vault created event:", info, "\n")
 
-    # convex
-    cvx_strat = tx.events["NewAutomatedVault"]["convexStrategy"]
-    convex_strategy = StrategyConvexFactoryClonable.at(cvx_strat)
-    print("Convex strategy:", cvx_strat)
-
-    assert vault.withdrawalQueue(0) == cvx_strat
-    assert vault.strategies(cvx_strat)["performanceFee"] == 0
-    assert convex_strategy.creditThreshold() == 5e22  # 50k
-    assert convex_strategy.healthCheck() == velo_global.healthCheck()
-    assert (
-        convex_strategy.harvestProfitMaxInUsdc() == velo_global.harvestProfitMaxInUsdc()
-    )
-    assert (
-        convex_strategy.harvestProfitMinInUsdc() == velo_global.harvestProfitMinInUsdc()
-    )
-    assert convex_strategy.healthCheck() == velo_global.healthCheck()
-    assert convex_strategy.localkeepVELO() == velo_global.keepVELO()
-    assert convex_strategy.localKeepCVX() == velo_global.keepCVX()
-    assert convex_strategy.veloVoter() == velo_global.veloVoter()
-    assert convex_strategy.convexVoter() == velo_global.convexVoter()
-    assert convex_strategy.rewards() == velo_global.treasury()
-    assert convex_strategy.strategist() == velo_global.management()
-    assert convex_strategy.keeper() == velo_global.keeper()
-    print("Asserts good for our convex strategy")
-
     # curve
-    curve_strat = tx.events["NewAutomatedVault"]["curveStrategy"]
+    curve_strat = tx.events["NewAutomatedVault"]["veloStrategy"]
     curve_strategy = StrategyVelodromeClonable.at(curve_strat)
     print("Curve strategy:", curve_strat)
 
     # curve
-    assert vault.withdrawalQueue(1) == curve_strat
+    assert vault.withdrawalQueue(0) == curve_strat
     assert vault.strategies(curve_strat)["performanceFee"] == 0
     assert curve_strategy.creditThreshold() == 5e22
     assert curve_strategy.healthCheck() == velo_global.healthCheck()

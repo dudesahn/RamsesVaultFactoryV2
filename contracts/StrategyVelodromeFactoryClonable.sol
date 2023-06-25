@@ -61,7 +61,7 @@ interface IVelodromeGauge {
         address account
     ) external view returns (uint256);
 
-    function stake() external view returns (address);
+    function stakingToken() external view returns (address);
 }
 
 interface IVelodromePool {
@@ -245,11 +245,11 @@ contract StrategyVelodromeFactoryClonable is BaseStrategy {
             revert("already initialized");
         }
 
-        // gauge, giver of live and VELO
+        // gauge, giver of life and VELO
         gauge = IVelodromeGauge(_gauge);
 
         // make sure we have the right gauge for our want
-        if (gauge.stake() != address(want)) {
+        if (gauge.stakingToken() != address(want)) {
             revert("gauge pool mismatch");
         }
 
@@ -269,16 +269,18 @@ contract StrategyVelodromeFactoryClonable is BaseStrategy {
             swapRouteForToken1.push(_veloSwapRouteForToken1[i]);
         }
 
-        // check our swap paths match our pool
+        // check our swap paths end with our correct token, but only if it's not VELO
         if (
-            address(poolToken0) ==
+            address(poolToken0) != address(velo) &&
+            address(poolToken0) !=
             swapRouteForToken0[_veloSwapRouteForToken0.length - 1].to
         ) {
             revert("token0 route error");
         }
 
         if (
-            address(poolToken1) ==
+            address(poolToken1) != address(velo) &&
+            address(poolToken1) !=
             swapRouteForToken1[_veloSwapRouteForToken1.length - 1].to
         ) {
             revert("token1 route error");

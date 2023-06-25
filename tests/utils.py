@@ -169,32 +169,37 @@ def check_status(
 
 
 # get our whale some tokens if we don't naturally have one already
-def create_whale(
-    token,
-    whale,
-):
-    # make sure our whale address has plenty of tokens
-    usdc = interface.IERC20("0x7F5c764cBc14f9669B88837ca1490cCa17c31607")
-    blue = interface.IERC20("0xa50B23cDfB2eC7c590e84f403256f67cE6dffB84")
-    router_v2 = Contract("0xa062aE8A9c5e11aaA026fc2670B0D65cCc8B2858")
-
-    # first, approve on V2 router
-    usdc.approve(router_v2, 2**256 - 1, {"from": whale})
-    blue.approve(router_v2, 2**256 - 1, {"from": whale})
-    router_v2.addLiquidity(
-        usdc,
-        blue,
-        False,
-        usdc.balanceOf(whale),
-        blue.balanceOf(whale),
-        1,
-        1,
-        whale,
-        2**256 - 1,
-        {"from": whale},
-    )
-
-    # check that we have tokens
-    token_bal = token.balanceOf(whale)
-    assert token_bal > 0
-    print("Token balance:", token_bal / 1e18)
+# def create_whale(
+#     token,
+#     whale,
+# ):
+#     # make sure our whale address has plenty of tokens
+#     usdc = interface.IERC20("0x7F5c764cBc14f9669B88837ca1490cCa17c31607")
+#     blue = interface.IERC20("0xa50B23cDfB2eC7c590e84f403256f67cE6dffB84")
+#     router_v2 = Contract("0xa062aE8A9c5e11aaA026fc2670B0D65cCc8B2858")
+#     v1_lp = accounts.at("0x662f16652A242aaD3C938c80864688e4d9B26A5e", force=True)
+#
+#     # first, approve on V2 router
+#     usdc.approve(router_v2, 2**256 - 1, {"from": v1_lp})
+#     blue.approve(router_v2, 2**256 - 1, {"from": v1_lp})
+#     router_v2.addLiquidity(
+#         usdc,
+#         blue,
+#         False,
+#         usdc.balanceOf(v1_lp),
+#         blue.balanceOf(v1_lp),
+#         1,
+#         1,
+#         whale,
+#         2**256 - 1,
+#         {"from": v1_lp},
+#     )
+#
+#     # sleep 4 days so we have rewards
+#     chain.sleep(4 * 86400)
+#     chain.mine(100)
+#
+#     # check that we have tokens
+#     token_bal = token.balanceOf(whale)
+#     assert token_bal > 0
+#     print("Token balance:", token_bal / 1e18)

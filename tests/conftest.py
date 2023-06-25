@@ -2,7 +2,6 @@ import pytest
 from brownie import config, Contract, ZERO_ADDRESS, chain, interface, accounts
 from eth_abi import encode_single
 import requests
-from utils import create_whale
 
 # Snapshots the chain before each test and reverts after test completion.
 @pytest.fixture(scope="function", autouse=True)
@@ -11,7 +10,7 @@ def isolate(fn_isolation):
 
 
 # set this for if we want to use tenderly or not; mostly helpful because with brownie.reverts fails in tenderly forks.
-use_tenderly = True
+use_tenderly = False
 
 # use this to set what chain we use. 1 for ETH, 250 for fantom, 10 optimism, 42161 arbitrum
 chain_used = 10
@@ -41,7 +40,7 @@ def tenderly_fork(web3, chain):
 @pytest.fixture(scope="session")
 def token():
     token_address = "0x615B9dd61f1F9a80f5bcD33A53Eb79c37b20adDC"  # this should be the address of the ERC-20 used by the strategy/vault (BLU/USDC LP)
-    yield interface.IERC20(token_address)
+    yield interface.IVeloPoolV2(token_address)
 
 
 # v2 velo/usdc pool: 0x8134A2fDC127549480865fB8E5A9E8A8a95a54c5 (liq here to swap fine)
@@ -57,11 +56,8 @@ def whale(amount, token):
     # Totally in it for the tech
     # Update this with a large holder of your want token (the largest EOA holder of LP)
     whale = accounts.at(
-        "0x662f16652A242aaD3C938c80864688e4d9B26A5e", force=True
-    )  # 0x662f16652A242aaD3C938c80864688e4d9B26A5e, blu/USDC v1 pool
-
-    # make sure we'll have enough tokens
-    create_whale(token, whale)
+        "0x8166f06D50a65F82850878c951fcA29Af5Ea7Db2", force=True
+    )  # 0x8166f06D50a65F82850878c951fcA29Af5Ea7Db2, blu/USDC v2 gauge
 
     if token.balanceOf(whale) < 2 * amount:
         raise ValueError(
@@ -73,7 +69,7 @@ def whale(amount, token):
 # this is the amount of funds we have our whale deposit. adjust this as needed based on their wallet balance
 @pytest.fixture(scope="function")
 def amount(token):
-    amount = 0.3 * 10 ** token.decimals()  # 0.3 for blu/usdc!
+    amount = 0.1 * 10 ** token.decimals()  # 0.3 for blu/usdc!
     yield amount
 
 
@@ -81,8 +77,8 @@ def amount(token):
 def profit_whale(profit_amount, token):
     # ideally not the same whale as the main whale, or else they will lose money
     profit_whale = accounts.at(
-        "0x662f16652A242aaD3C938c80864688e4d9B26A5e", force=True
-    )  # 0x662f16652A242aaD3C938c80864688e4d9B26A5e, rETH pool, 7.7 tokens
+        "0x8166f06D50a65F82850878c951fcA29Af5Ea7Db2", force=True
+    )  # 0x8166f06D50a65F82850878c951fcA29Af5Ea7Db2, rETH pool, 7.7 tokens
     if token.balanceOf(profit_whale) < 5 * profit_amount:
         raise ValueError(
             "Our profit whale needs more funds. Find another whale or reduce your profit_amount variable."
@@ -119,7 +115,7 @@ def old_vault():
 # this is the name we want to give our strategy
 @pytest.fixture(scope="session")
 def strategy_name():
-    strategy_name = "StrategyAurarETH"
+    strategy_name = "StrategyVelodromeClonable"
     yield strategy_name
 
 
@@ -349,8 +345,10 @@ def strategy(
 
     # turn our oracle into testing mode by setting the provider to 0x00, then forcing true
     strategy.setBaseFeeOracle(base_fee_oracle, {"from": management})
-    base_fee_oracle.setBaseFeeProvider(ZERO_ADDRESS, {"from": management})
-    base_fee_oracle.setManualBaseFeeBool(True, {"from": management})
+    base_fee_oracle.setBaseFeeProvider(
+        ZERO_ADDRESS, {"from": base_fee_oracle.governance()}
+    )
+    base_fee_oracle.setManualBaseFeeBool(True, {"from": base_fee_oracle.governance()})
     assert strategy.isBaseFeeAcceptable() == True
 
     yield strategy
@@ -427,35 +425,34 @@ def gauge():
 # template vault just so we can create a template strategy for cloning
 @pytest.fixture(scope="session")
 def template_vault():
-    template_vault = "0x22687Ca792A8Cb5E169a77E0949e71Fe37147604"  # DOLA-USDC v1
+    template_vault = "0xde8747070f81a5217bd812d3833F725f588E3dec"
     yield template_vault
 
 
 # gauge for our template vault pool
 @pytest.fixture(scope="session")
 def template_gauge():
-    template_gauge = "0xAFD2c84b9d1cd50E7E18a55e419749A6c9055E1F"  # DOLA-USDC v1
+    template_gauge = "0x84195De69B8B131ddAa4Be4F75633fCD7F430b7c"  # VELO-USDC v2
     yield template_gauge
 
 
 # route to swap from VELO v2 to USDC
 @pytest.fixture(scope="session")
 def template_route0(dola, usdc, blue, to_sweep, v2_pool_factory, v1_pool_factory):
-    template_route0 = [(to_sweep.address, usdc, False, v2_pool_factory)]
+    template_route0 = [
+        (to_sweep.address, usdc, False, v2_pool_factory),
+    ]
     yield template_route0
 
 
 # route to swap from VELO v2 to DOLA
 @pytest.fixture(scope="session")
 def template_route1(dola, usdc, blue, to_sweep, v2_pool_factory, v1_pool_factory):
-    route0 = [
-        (to_sweep.address, usdc, False, v2_pool_factory),
-        (usdc, dola, True, v1_pool_factory),
-    ]
-    yield route0
+    template_route1 = []
+    yield template_route1
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture(scope="function")
 def velo_template(
     StrategyVelodromeFactoryClonable,
     template_vault,
@@ -466,19 +463,19 @@ def velo_template(
     template_route1,
 ):
     # deploy our curve template
-    curve_template = gov.deploy(
+    velo_template = gov.deploy(
         StrategyVelodromeFactoryClonable,
         template_vault,
         template_gauge,
         template_route0,
         template_route1,
     )
-    print("Curve Template deployed:", curve_template)
+    print("Velo Template deployed:", velo_template)
 
-    yield curve_template
+    yield velo_template
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture(scope="function")
 def velo_global(
     VelodromeGlobal,
     new_registry,
