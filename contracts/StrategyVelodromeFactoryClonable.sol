@@ -10,6 +10,7 @@ interface IVelodromeRouter {
         address from;
         address to;
         bool stable;
+        address factory;
     }
 
     function addLiquidity(
@@ -32,6 +33,7 @@ interface IVelodromeRouter {
         uint256 deadline
     ) external returns (uint256[] memory amounts);
 
+    // should we try and use this to calc on-chain expected? realistically not worth it?
     function getAmountOut(
         uint256 amountIn,
         address tokenIn,
@@ -113,23 +115,25 @@ contract StrategyVelodromeFactoryClonable is BaseStrategy {
     /// @notice Factory address that deployed our Velodrome pool.
     address public factory;
 
-    /// @notice True is our pool is stable, false if volatile.
+    /// @notice True if our pool is stable, false if volatile.
     bool public isStablePool;
 
     /// @notice Array of structs containing our swap route to go from VELO to token0.
+    /// @dev Struct is from token, to token, and true/false for stable/volatile.
     IVelodromeRouter.Routes[] public swapRouteForToken0;
 
     /// @notice Array of structs containing our swap route to go from VELO to token1.
+    /// @dev Struct is from token, to token, and true/false for stable/volatile.
     IVelodromeRouter.Routes[] public swapRouteForToken1;
-
-    // we use this to be able to adjust our strategy's name
-    string internal stratName;
 
     /// @notice Array of our tokens to claim from the gauge
     address[] public rewardTokens;
 
     /// @notice Will only be true on the original deployed contract and not on clones; we don't want to clone a clone.
     bool public isOriginal = true;
+
+    // we use this to be able to adjust our strategy's name
+    string internal stratName;
 
     /* ========== CONSTRUCTOR ========== */
 
@@ -540,21 +544,6 @@ contract StrategyVelodromeFactoryClonable is BaseStrategy {
         returns (address[] memory)
     {}
 
-    /* ========== YSWAPS ========== */
-
-    /// @notice Use to update any rewards we are claiming, other than VELO
-    /// @dev Do this before updating trade factory if we have extra rewards.
-    ///  Can only be called by governance.
-    /// @param _rewards Rewards tokens to add to our trade factory.
-    //     function updateRewards(address[] memory _rewards) external onlyGovernance {
-    //         address tf = tradeFactory;
-    //         _removeTradeFactoryPermissions(true);
-    //         rewardsTokens = _rewards;
-    //
-    //         tradeFactory = tf;
-    //         _setUpTradeFactory();
-    //     }
-
     /* ========== KEEP3RS ========== */
 
     /**
@@ -632,10 +621,18 @@ contract StrategyVelodromeFactoryClonable is BaseStrategy {
     }
 
     /// @notice Use this to set or update our voter contracts.
-    /// @dev For Curve strategies, this is where we send our keepCVX.
+    /// @dev For Velo strategies, this is where we send our keepVELO.
     ///  Only governance can set this.
-    /// @param _veloVoter Address of our curve voter.
+    /// @param _veloVoter Address of our velodrome voter.
     function setVoter(address _veloVoter) external onlyGovernance {
         veloVoter = _veloVoter;
+    }
+
+    /// @notice Use this to set or update reward tokens to claim from our gauge.
+    /// @dev Usually we should only have VELO, but occasionally other tokens too.
+    ///  Only governance can set this.
+    /// @param _rewards Reward tokens to claim from this pool's gauge.
+    function setRewards(address[] memory _rewards) external onlyGovernance {
+        rewardTokens = _rewards;
     }
 }

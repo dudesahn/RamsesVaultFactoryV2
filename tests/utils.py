@@ -1,6 +1,6 @@
 import pytest
 import brownie
-from brownie import interface, chain, accounts, ZERO_ADDRESS
+from brownie import interface, chain, accounts, ZERO_ADDRESS, Contract
 
 # returns (profit, loss) of a harvest
 def harvest_strategy(
@@ -22,13 +22,6 @@ def harvest_strategy(
 
     ####### ADD LOGIC AS NEEDED FOR CLAIMING/SENDING REWARDS TO STRATEGY #######
     # usually this is automatic, but it may need to be externally triggered
-
-    # claiming rewards should work just fine for this strategy, but we will earmark just in case
-    try:
-        booster = interface.IAuraBooster(strategy.depositContract())
-        booster.earmarkRewards(strategy.pid(), {"from": gov})
-    except:
-        print("Not a convex strategy")
 
     # if we have no staked assets, and we are taking profit (when closing out a strategy) then we will need to ignore health check
     # we also may have profit and no assets in edge cases
@@ -173,3 +166,35 @@ def check_status(
         )
 
     return strategy_params
+
+
+# get our whale some tokens if we don't naturally have one already
+def create_whale(
+    token,
+    whale,
+):
+    # make sure our whale address has plenty of tokens
+    usdc = interface.IERC20("0x7F5c764cBc14f9669B88837ca1490cCa17c31607")
+    blue = interface.IERC20("0xa50B23cDfB2eC7c590e84f403256f67cE6dffB84")
+    router_v2 = Contract("0xa062aE8A9c5e11aaA026fc2670B0D65cCc8B2858")
+
+    # first, approve on V2 router
+    usdc.approve(router_v2, 2**256 - 1, {"from": whale})
+    blue.approve(router_v2, 2**256 - 1, {"from": whale})
+    router_v2.addLiquidity(
+        usdc,
+        blue,
+        False,
+        usdc.balanceOf(whale),
+        blue.balanceOf(whale),
+        1,
+        1,
+        whale,
+        2**256 - 1,
+        {"from": whale},
+    )
+
+    # check that we have tokens
+    token_bal = token.balanceOf(whale)
+    assert token_bal > 0
+    print("Token balance:", token_bal / 1e18)
