@@ -115,6 +115,11 @@ def test_vault_deployment(
             tx = velo_global.createNewVaultsAndStrategies(
                 gauge, route0, route1, {"from": whale}
             )
+        # can't deploy a vault for something that's not a gauge
+        with brownie.reverts():
+            tx = velo_global.createNewVaultsAndStrategies(
+                whale, route0, route1, {"from": whale}
+            )
 
 
 def test_permissioned_vault(
@@ -222,33 +227,6 @@ def test_permissioned_vault(
     vault.acceptGovernance({"from": gov})
     assert vault.governance() == gov.address
     print("Gov accepted by daddy")
-
-    # deploy a FUD vault, should have convex and curve.
-
-
-#     if pid != 36:
-#         chain.sleep(1)
-#         chain.mine(1)
-#
-#         # no keepVELO here to hit the other side of the if statement
-#         velo_global.setKeepVELO(0, velo_global.veloVoter(), {"from": gov})
-#
-#         tx = velo_global.createNewVaultsAndStrategiesPermissioned(
-#             fud_gauge,
-#             "FUD Vault",
-#             "yvCurve-FUD",
-#             {"from": velo_global.management()},
-#         )
-#         print("New FUD vault deployed, vault/convex/curve", tx.return_value)
-#         chain.sleep(1)
-#         chain.mine(1)
-#
-#     if not tests_using_tenderly:
-#         # we can't deploy another curve vault because of our curve strategy
-#         with brownie.reverts("Voter strategy already exists"):
-#             tx = velo_global.createNewVaultsAndStrategiesPermissioned(
-#                 gauge, "test2", "test2", {"from": velo_global.management()}
-#             )
 
 
 def test_velo_global_setters_and_views(

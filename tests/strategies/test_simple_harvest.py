@@ -1,4 +1,4 @@
-from brownie import chain, Contract
+from brownie import chain, Contract, interface
 from utils import harvest_strategy
 import pytest
 
@@ -52,6 +52,14 @@ def test_simple_harvest(
         profit_amount,
         target,
     )
+    # check the balance of each of our tokens, should be close to zero
+    token0 = interface.IERC20(strategy.poolToken0())
+    token1 = interface.IERC20(strategy.poolToken1())
+    token0_balance = token0.balanceOf(strategy) / 1e6
+    token1_balance = token1.balanceOf(strategy) / 1e18
+    print("\n🧐 Token 0 Balance after Harvest (USDC):", token0_balance)
+    print("🧐 Token 1 Balance after Harvest (BLU):", token1_balance)
+
     # record this here so it isn't affected if we donate via ySwaps
     strategy_assets = strategy.estimatedTotalAssets()
 

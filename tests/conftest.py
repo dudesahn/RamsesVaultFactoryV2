@@ -2,7 +2,7 @@ import pytest
 from brownie import config, Contract, ZERO_ADDRESS, chain, interface, accounts
 from eth_abi import encode_single
 import requests
-from utils import create_whale
+from utils import create_whale, create_stable_lp_whale, create_velo_lp_whale
 
 # Snapshots the chain before each test and reverts after test completion.
 @pytest.fixture(scope="function", autouse=True)
@@ -78,7 +78,7 @@ def amount(token):
 
 
 @pytest.fixture(scope="function")
-def profit_whale(profit_amount, token):
+def profit_whale(profit_amount, token, whale):
     # ideally not the same whale as the main whale, or else they will lose money
     profit_whale = accounts.at(
         "0x662f16652A242aaD3C938c80864688e4d9B26A5e", force=True
@@ -392,11 +392,11 @@ def route0(dola, usdc, blue, to_sweep, v2_pool_factory, v1_pool_factory):
 # route to swap from VELO v2 to BLU (on v2)
 @pytest.fixture(scope="session")
 def route1(dola, usdc, blue, to_sweep, v2_pool_factory, v1_pool_factory):
-    route0 = [
+    route1 = [
         (to_sweep.address, usdc, False, v2_pool_factory),
         (usdc, blue, False, v2_pool_factory),
     ]
-    yield route0
+    yield route1
 
 
 @pytest.fixture(scope="session")
@@ -419,13 +419,6 @@ def blue():
 def which_strategy():
     which_strategy = 1
     yield which_strategy
-
-
-# gauge for the curve pool
-@pytest.fixture(scope="session")
-def gauge():
-    gauge = "0x8166f06D50a65F82850878c951fcA29Af5Ea7Db2"  # v2 BLU/USDC
-    yield Contract(gauge)
 
 
 # gauge for the curve pool
@@ -458,11 +451,21 @@ def template_route0(dola, usdc, blue, to_sweep, v2_pool_factory, v1_pool_factory
     yield template_route0
 
 
-# route to swap from VELO v2 to DOLA
+# route to swap from VELO v2 to...itself
 @pytest.fixture(scope="session")
 def template_route1(dola, usdc, blue, to_sweep, v2_pool_factory, v1_pool_factory):
     template_route1 = []
     yield template_route1
+
+
+# route to swap from VELO v2 to DOLA
+@pytest.fixture(scope="session")
+def random_route_1(dola, usdc, blue, to_sweep, v2_pool_factory, v1_pool_factory):
+    random_route_1 = [
+        (to_sweep.address, usdc, False, v2_pool_factory),
+        (usdc, dola, False, v1_pool_factory),
+    ]
+    yield random_route_1
 
 
 @pytest.fixture(scope="function")
@@ -510,3 +513,290 @@ def velo_global(
 @pytest.fixture(scope="session")
 def new_registry():
     yield Contract("0x79286Dd38C9017E5423073bAc11F53357Fc5C128")
+
+
+################# USE THESE VARS FOR TESTING HOW OTHER LP TOKENS WOULD FUNCTION #################
+
+################# STABLE POOL #################
+
+# gauge for the curve pool
+@pytest.fixture(scope="session")
+def stable_gauge():
+    stable_gauge = "0xa1034Ed2C9eb616d6F7f318614316e64682e7923"  # v2 USDC/DOLA
+    yield interface.IVeloV2Gauge(stable_gauge)
+
+
+@pytest.fixture(scope="session")
+def stable_token():
+    stable_token = "0xB720FBC32d60BB6dcc955Be86b98D8fD3c4bA645"  # this should be the address of the ERC-20 used by the strategy/vault (USDC/DOLA LP)
+    yield interface.IVeloPoolV2(stable_token)
+
+
+# route to swap from VELO v2 to USDC
+@pytest.fixture(scope="session")
+def stable_route0(dola, usdc, blue, to_sweep, v2_pool_factory, v1_pool_factory):
+    stable_route0 = [
+        (to_sweep.address, usdc, False, v2_pool_factory),
+    ]
+    yield stable_route0
+
+
+# route to swap from VELO v2 to DOLA
+@pytest.fixture(scope="session")
+def stable_route1(dola, usdc, blue, to_sweep, v2_pool_factory, v1_pool_factory):
+    # need to use v2 for USDC -> DOLA since we use v1 as our whale
+    stable_route1 = [
+        (to_sweep.address, usdc, False, v2_pool_factory),
+        (usdc, dola, True, v2_pool_factory),
+    ]
+    yield stable_route1
+
+
+@pytest.fixture(scope="function")
+def stable_whale(stable_amount, stable_token, stable_gauge):
+    # Totally in it for the tech
+    # Update this with a large holder of your want token (the largest EOA holder of LP)
+    stable_whale = accounts.at(
+        "0x6C5019D345Ec05004A7E7B0623A91a0D9B8D590d", force=True
+    )  # 0x6C5019D345Ec05004A7E7B0623A91a0D9B8D590d, USDC/DOLA v1 pool
+
+    # make sure we'll have enough tokens
+    create_stable_lp_whale(stable_token, stable_whale, stable_gauge)
+
+    if stable_token.balanceOf(stable_whale) < 2 * stable_amount:
+        raise ValueError(
+            "Our whale needs more funds. Find another whale or reduce your amount variable."
+        )
+    yield stable_whale
+
+
+# this is the amount of funds we have our whale deposit. adjust this as needed based on their wallet balance
+@pytest.fixture(scope="function")
+def stable_amount(stable_token):
+    stable_amount = 1 * 10 ** stable_token.decimals()  # 1 for DOLA/USDC
+    yield stable_amount
+
+
+@pytest.fixture(scope="function")
+def stable_profit_whale(stable_profit_amount, stable_token):
+    # ideally not the same whale as the main whale, or else they will lose money
+    profit_whale = accounts.at(
+        "0x6C5019D345Ec05004A7E7B0623A91a0D9B8D590d", force=True
+    )  # 0x6C5019D345Ec05004A7E7B0623A91a0D9B8D590d,
+    if stable_token.balanceOf(profit_whale) < 5 * stable_profit_amount:
+        raise ValueError(
+            "Our profit whale needs more funds. Find another whale or reduce your profit_amount variable."
+        )
+    yield profit_whale
+
+
+# this is the amount of funds we have our whale deposit. adjust this as needed based on their wallet balance
+@pytest.fixture(scope="function")
+def stable_profit_amount(stable_token):
+    stable_profit_amount = (
+        0.0000003 * 10 ** stable_token.decimals()
+    )  # 0.003 for DOLA/MAI
+    yield stable_profit_amount
+
+
+@pytest.fixture(scope="function")
+def stable_vault(pm, gov, rewards, guardian, management, stable_token, vault_address):
+    token = stable_token
+    if vault_address == ZERO_ADDRESS:
+        Vault = pm(config["dependencies"][0]).Vault
+        stable_vault = guardian.deploy(Vault)
+        stable_vault.initialize(token, gov, rewards, "", "", guardian)
+        stable_vault.setDepositLimit(2**256 - 1, {"from": gov})
+        stable_vault.setManagement(management, {"from": gov})
+    else:
+        stable_vault = interface.IVaultFactory045(vault_address)
+    yield stable_vault
+
+
+# replace the first value with the name of your strategy
+@pytest.fixture(scope="function")
+def stable_strategy(
+    strategist,
+    keeper,
+    stable_vault,
+    gov,
+    management,
+    health_check,
+    contract_name,
+    strategy_name,
+    base_fee_oracle,
+    vault_address,
+    which_strategy,
+    stable_gauge,
+    stable_route0,
+    stable_route1,
+):
+    vault = stable_vault
+    strategy = gov.deploy(
+        contract_name,
+        vault,
+        stable_gauge,
+        stable_route0,
+        stable_route1,
+    )
+    strategy.setKeeper(keeper, {"from": gov})
+
+    # set our management fee to zero so it doesn't mess with our profit checking
+    vault.setManagementFee(0, {"from": gov})
+    vault.setPerformanceFee(0, {"from": gov})
+
+    vault.addStrategy(strategy, 10_000, 0, 2**256 - 1, 0, {"from": gov})
+
+    print("New Vault, Velo Strategy")
+    chain.sleep(1)
+    chain.mine(1)
+
+    # turn our oracle into testing mode by setting the provider to 0x00, then forcing true
+    strategy.setBaseFeeOracle(base_fee_oracle, {"from": management})
+    base_fee_oracle.setBaseFeeProvider(
+        ZERO_ADDRESS, {"from": base_fee_oracle.governance()}
+    )
+    base_fee_oracle.setManualBaseFeeBool(True, {"from": base_fee_oracle.governance()})
+    assert strategy.isBaseFeeAcceptable() == True
+
+    yield strategy
+
+
+################# VELO POOL #################
+
+# gauge for the curve pool
+@pytest.fixture(scope="session")
+def velo_gauge():
+    velo_gauge = "0x84195De69B8B131ddAa4Be4F75633fCD7F430b7c"  # v2 USDC/VELO
+    yield interface.IVeloV2Gauge(velo_gauge)
+
+
+@pytest.fixture(scope="session")
+def velo_token():
+    velo_token = "0x8134A2fDC127549480865fB8E5A9E8A8a95a54c5"  # this should be the address of the ERC-20 used by the strategy/vault (USDC/VELOv2 LP)
+    yield interface.IVeloPoolV2(velo_token)
+
+
+# route to swap from VELO v2 to USDC
+@pytest.fixture(scope="session")
+def velo_route0(dola, usdc, blue, to_sweep, v2_pool_factory, v1_pool_factory):
+    velo_route0 = [
+        (to_sweep.address, usdc, False, v2_pool_factory),
+    ]
+    yield velo_route0
+
+
+# route to swap from VELO v2 to DOLA
+@pytest.fixture(scope="session")
+def velo_route1(dola, usdc, blue, to_sweep, v2_pool_factory, v1_pool_factory):
+    # need to use v2 for USDC -> DOLA since we use v1 as our whale
+    velo_route1 = []
+    yield velo_route1
+
+
+@pytest.fixture(scope="function")
+def velo_whale(velo_amount, velo_token, velo_gauge):
+    # Totally in it for the tech
+    # Update this with a large holder of your want token (the largest EOA holder of LP)
+    velo_whale = accounts.at(
+        "0xEdDc3369E15E9EfFa6e1eC2eE1ddc3CDf501E852", force=True
+    )  # 0xEdDc3369E15E9EfFa6e1eC2eE1ddc3CDf501E852, USDC/DOLA v1 pool
+
+    # make sure we'll have enough tokens
+    create_velo_lp_whale(velo_token, velo_whale, velo_gauge)
+
+    if velo_token.balanceOf(velo_whale) < 2 * velo_amount:
+        raise ValueError(
+            "Our whale needs more funds. Find another whale or reduce your amount variable."
+        )
+    yield velo_whale
+
+
+# this is the amount of funds we have our whale deposit. adjust this as needed based on their wallet balance
+@pytest.fixture(scope="function")
+def velo_amount(velo_token):
+    velo_amount = 0.001 * 10 ** velo_token.decimals()  # 1 for DOLA/USDC
+    yield velo_amount
+
+
+@pytest.fixture(scope="function")
+def velo_profit_whale(velo_profit_amount, velo_token):
+    # ideally not the same whale as the main whale, or else they will lose money
+    profit_whale = accounts.at(
+        "0xEdDc3369E15E9EfFa6e1eC2eE1ddc3CDf501E852", force=True
+    )  # 0xEdDc3369E15E9EfFa6e1eC2eE1ddc3CDf501E852,
+    if velo_token.balanceOf(profit_whale) < 5 * velo_profit_amount:
+        raise ValueError(
+            "Our profit whale needs more funds. Find another whale or reduce your profit_amount variable."
+        )
+    yield profit_whale
+
+
+# this is the amount of funds we have our whale deposit. adjust this as needed based on their wallet balance
+@pytest.fixture(scope="function")
+def velo_profit_amount(velo_token):
+    velo_profit_amount = 0.0000003 * 10 ** velo_token.decimals()  # 0.003 for DOLA/MAI
+    yield velo_profit_amount
+
+
+@pytest.fixture(scope="function")
+def velo_vault(pm, gov, rewards, guardian, management, velo_token, vault_address):
+    token = velo_token
+    if vault_address == ZERO_ADDRESS:
+        Vault = pm(config["dependencies"][0]).Vault
+        velo_vault = guardian.deploy(Vault)
+        velo_vault.initialize(token, gov, rewards, "", "", guardian)
+        velo_vault.setDepositLimit(2**256 - 1, {"from": gov})
+        velo_vault.setManagement(management, {"from": gov})
+    else:
+        velo_vault = interface.IVaultFactory045(vault_address)
+    yield velo_vault
+
+
+# replace the first value with the name of your strategy
+@pytest.fixture(scope="function")
+def velo_strategy(
+    strategist,
+    keeper,
+    velo_vault,
+    gov,
+    management,
+    health_check,
+    contract_name,
+    strategy_name,
+    base_fee_oracle,
+    vault_address,
+    which_strategy,
+    velo_gauge,
+    velo_route0,
+    velo_route1,
+):
+    vault = velo_vault
+    strategy = gov.deploy(
+        contract_name,
+        vault,
+        velo_gauge,
+        velo_route0,
+        velo_route1,
+    )
+    strategy.setKeeper(keeper, {"from": gov})
+
+    # set our management fee to zero so it doesn't mess with our profit checking
+    vault.setManagementFee(0, {"from": gov})
+    vault.setPerformanceFee(0, {"from": gov})
+
+    vault.addStrategy(strategy, 10_000, 0, 2**256 - 1, 0, {"from": gov})
+
+    print("New Vault, Velo Strategy")
+    chain.sleep(1)
+    chain.mine(1)
+
+    # turn our oracle into testing mode by setting the provider to 0x00, then forcing true
+    strategy.setBaseFeeOracle(base_fee_oracle, {"from": management})
+    base_fee_oracle.setBaseFeeProvider(
+        ZERO_ADDRESS, {"from": base_fee_oracle.governance()}
+    )
+    base_fee_oracle.setManualBaseFeeBool(True, {"from": base_fee_oracle.governance()})
+    assert strategy.isBaseFeeAcceptable() == True
+
+    yield strategy

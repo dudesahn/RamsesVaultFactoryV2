@@ -211,6 +211,17 @@ def test_setters(
         target,
     )
 
+    with brownie.reverts():
+        strategy.setLocalKeepVelo(100_000, {"from": gov})
+    strategy.setVoter(gov, {"from": gov})
+    strategy.setLocalKeepVelo(100, {"from": gov})
+    strategy.setVoter(ZERO_ADDRESS, {"from": gov})
+    with brownie.reverts():
+        strategy.setLocalKeepVelo(100, {"from": gov})
+    with brownie.reverts():
+        strategy.setLocalKeepVelo(100, {"from": whale})
+    strategy.setLocalKeepVelo(0, {"from": gov})
+
 
 # test sweeping out tokens
 def test_sweep(

@@ -26,6 +26,11 @@ def test_migration(
     to_sweep,
     route0,
     route1,
+    template_gauge,
+    template_vault,
+    template_route0,
+    template_route1,
+    random_route_1,
 ):
 
     ## deposit to the vault after approving
@@ -55,6 +60,39 @@ def test_migration(
         route0,
         route1,
     )
+
+    # include a few other deployments to test here
+    with brownie.reverts("gauge pool mismatch"):
+        test_strategy = gov.deploy(
+            contract_name,
+            vault,
+            template_gauge,
+            route0,
+            route1,
+        )
+
+    # make sure we can deploy VELO/USDC just fine
+    test_strategy = gov.deploy(
+        contract_name, template_vault, template_gauge, template_route0, template_route1
+    )
+
+    with brownie.reverts("token0 route error"):
+        test_strategy = gov.deploy(
+            contract_name,
+            vault,
+            gauge,
+            random_route_1,
+            route1,
+        )
+
+    with brownie.reverts("token1 route error"):
+        test_strategy = gov.deploy(
+            contract_name,
+            vault,
+            gauge,
+            route0,
+            template_route0,
+        )
 
     # can we harvest an unactivated strategy? should be no
     tx = new_strategy.harvestTrigger(0, {"from": gov})

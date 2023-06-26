@@ -163,8 +163,8 @@ def create_whale(
         {"from": v1_lp},
     )
 
-    # sleep 4 days so we have rewards
-    chain.sleep(4 * 86400)
+    # sleep 3 days so we have rewards
+    chain.sleep(3 * 86400)
     chain.mine(100)
 
     # have our voter queue up rewards
@@ -180,4 +180,106 @@ def create_whale(
     # check that we have tokens
     token_bal = token.balanceOf(whale)
     assert token_bal > 0
-    print("Token balance:", token_bal / 1e18)
+    print("Token balance:", token_bal / 1e18, token.symbol())
+
+
+# get our whale some tokens if we don't naturally have one already
+def create_stable_lp_whale(
+    token,
+    whale,
+    gauge,
+):
+    # make sure our whale address has plenty of tokens
+    dola = interface.IERC20("0x8aE125E8653821E851F12A49F7765db9a9ce7384")
+    usdc = interface.IERC20("0x7F5c764cBc14f9669B88837ca1490cCa17c31607")
+    router_v2 = Contract("0xa062aE8A9c5e11aaA026fc2670B0D65cCc8B2858")
+    v1_lp = accounts.at(
+        "0x6C5019D345Ec05004A7E7B0623A91a0D9B8D590d", force=True
+    )  # USDC/DOLA v1
+
+    # first, approve on V2 router
+    dola.approve(router_v2, 2**256 - 1, {"from": v1_lp})
+    usdc.approve(router_v2, 2**256 - 1, {"from": v1_lp})
+    router_v2.addLiquidity(
+        usdc,
+        dola,
+        True,
+        usdc.balanceOf(v1_lp),
+        dola.balanceOf(v1_lp),
+        1,
+        1,
+        whale,
+        2**256 - 1,
+        {"from": v1_lp},
+    )
+
+    # sleep 3 days so we have rewards
+    chain.sleep(3 * 86400)
+    chain.mine(100)
+
+    # have our voter queue up rewards
+    voter = accounts.at("0x41C914ee0c7E1A5edCD0295623e6dC557B5aBf3C", force=True)
+    velo = interface.IERC20(gauge.rewardToken())
+    velo.approve(gauge, 2**256 - 1, {"from": voter})
+    velo_whale = accounts.at("0xFAf8FD17D9840595845582fCB047DF13f006787d", force=True)
+    velo.transfer(voter, 100_000e18, {"from": velo_whale})
+    gauge.notifyRewardAmount(100_000e18, {"from": voter})
+    chain.sleep(1)
+    chain.mine(1)
+
+    # check that we have tokens
+    token_bal = token.balanceOf(whale)
+    assert token_bal > 0
+    print("Token balance:", token_bal / 1e18, token.symbol())
+
+
+# get our whale some tokens if we don't naturally have one already
+def create_velo_lp_whale(
+    token,
+    whale,
+    gauge,
+):
+    # make sure our whale address has plenty of tokens
+    velo = interface.IERC20("0x9560e827aF36c94D2Ac33a39bCE1Fe78631088Db")
+    usdc = interface.IERC20("0x7F5c764cBc14f9669B88837ca1490cCa17c31607")
+    router_v2 = Contract("0xa062aE8A9c5e11aaA026fc2670B0D65cCc8B2858")
+    v1_lp = accounts.at(
+        "0xEdDc3369E15E9EfFa6e1eC2eE1ddc3CDf501E852", force=True
+    )  # velo_whale
+    usdc_whale = accounts.at("0x85149247691df622eaF1a8Bd0CaFd40BC45154a9", force=True)
+    usdc.transfer(v1_lp, usdc.balanceOf(usdc_whale), {"from": usdc_whale})
+
+    # first, approve on V2 router
+    velo.approve(router_v2, 2**256 - 1, {"from": v1_lp})
+    usdc.approve(router_v2, 2**256 - 1, {"from": v1_lp})
+    router_v2.addLiquidity(
+        usdc,
+        velo,
+        False,
+        usdc.balanceOf(v1_lp),
+        velo.balanceOf(v1_lp),
+        1,
+        1,
+        whale,
+        2**256 - 1,
+        {"from": v1_lp},
+    )
+
+    # sleep 3 days so we have rewards
+    chain.sleep(3 * 86400)
+    chain.mine(100)
+
+    # have our voter queue up rewards
+    voter = accounts.at("0x41C914ee0c7E1A5edCD0295623e6dC557B5aBf3C", force=True)
+    velo = interface.IERC20(gauge.rewardToken())
+    velo.approve(gauge, 2**256 - 1, {"from": voter})
+    velo_whale = accounts.at("0xFAf8FD17D9840595845582fCB047DF13f006787d", force=True)
+    velo.transfer(voter, 100_000e18, {"from": velo_whale})
+    gauge.notifyRewardAmount(100_000e18, {"from": voter})
+    chain.sleep(1)
+    chain.mine(1)
+
+    # check that we have tokens
+    token_bal = token.balanceOf(whale)
+    assert token_bal > 0
+    print("Token balance:", token_bal / 1e18, token.symbol())
