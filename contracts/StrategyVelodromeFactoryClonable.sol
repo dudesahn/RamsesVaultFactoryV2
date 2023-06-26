@@ -56,10 +56,7 @@ interface IVelodromeGauge {
 
     function getReward(address account) external;
 
-    function earned(
-        address token,
-        address account
-    ) external view returns (uint256);
+    function earned(address account) external view returns (uint256);
 
     function stakingToken() external view returns (address);
 }
@@ -292,8 +289,10 @@ contract StrategyVelodromeFactoryClonable is BaseStrategy {
         }
 
         // set up our baseStrategy vars
-        maxReportDelay = 365 days;
+        maxReportDelay = 30 days;
         creditThreshold = 50_000e18;
+        harvestProfitMinInUsdc = 1_000e6;
+        harvestProfitMaxInUsdc = 100_000e6;
 
         // want = Curve LP
         want.approve(_gauge, type(uint256).max);
@@ -334,7 +333,7 @@ contract StrategyVelodromeFactoryClonable is BaseStrategy {
 
     /// @notice Claimable VELO rewards. There can be other gauge rewards, but this is what we use for triggering harvests.
     function claimableRewards() public view returns (uint256) {
-        gauge.earned(address(velo), address(this));
+        return gauge.earned(address(this));
     }
 
     /// @notice Use this to check our current swap route of VELO to token0.

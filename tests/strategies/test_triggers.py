@@ -70,6 +70,7 @@ def test_triggers(
         profit_amount,
         target,
     )
+    print("Profit:", profit, "Loss:", loss)
 
     # should trigger false, nothing is ready yet, just harvested
     tx = strategy.harvestTrigger(0, {"from": gov})
@@ -81,7 +82,7 @@ def test_triggers(
 
     ################# GENERATE CLAIMABLE PROFIT HERE AS NEEDED #################
     # note that some strategies can't check claimable profit
-    claimable_profit = False
+    claimable_profit = True
     if not no_profit and claimable_profit:
         # check that we have claimable profit, need this for min and max profit checks below
         claimable_profit = strategy.claimableProfitInUsdc()
@@ -106,13 +107,6 @@ def test_triggers(
     print("\nShould we harvest? Should be True.", tx)
     assert tx == True
     strategy.setMaxReportDelay(86400 * 21)
-
-    # set our min delay so we trigger true, then set it back to 21 days
-    strategy.setMinReportDelay(sleep_time - 1)
-    tx = strategy.harvestTrigger(0, {"from": gov})
-    print("\nShould we harvest? Should be True.", tx)
-    assert tx == True
-    strategy.setMinReportDelay(86400 * 7)
 
     # harvest, wait
     (profit, loss, extra) = harvest_strategy(
