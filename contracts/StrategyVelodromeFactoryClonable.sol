@@ -54,7 +54,7 @@ interface IVelodromeGauge {
 
     function withdraw(uint256 amount) external;
 
-    function getReward(address account, address[] memory tokens) external;
+    function getReward(address account) external;
 
     function earned(
         address token,
@@ -126,8 +126,13 @@ contract StrategyVelodromeFactoryClonable is BaseStrategy {
     /// @dev Struct is from token, to token, and true/false for stable/volatile.
     IVelodromeRouter.Routes[] public swapRouteForToken1;
 
-    /// @notice Array of our tokens to claim from the gauge
-    address[] public rewardTokens;
+    /// @notice Minimum profit size in USDC that we want to harvest.
+    /// @dev Only used in harvestTrigger.
+    uint256 public harvestProfitMinInUsdc;
+
+    /// @notice Maximum profit size in USDC that we want to harvest (ignore gas price once we get here).
+    /// @dev Only used in harvestTrigger.
+    uint256 public harvestProfitMaxInUsdc;
 
     /// @notice Will only be true on the original deployed contract and not on clones; we don't want to clone a clone.
     bool public isOriginal = true;
@@ -303,8 +308,6 @@ contract StrategyVelodromeFactoryClonable is BaseStrategy {
                 IDetails(address(want)).symbol()
             )
         );
-
-        rewardTokens.push(address(velo));
     }
 
     /* ========== VIEWS ========== */
@@ -372,7 +375,7 @@ contract StrategyVelodromeFactoryClonable is BaseStrategy {
         returns (uint256 _profit, uint256 _loss, uint256 _debtPayment)
     {
         // harvest no matter what
-        gauge.getReward(address(this), rewardTokens);
+        gauge.getReward(address(this));
         uint256 veloBalance = velo.balanceOf(address(this));
 
         // by default this is zero, but if we want any for our voter this will be used
@@ -389,57 +392,60 @@ contract StrategyVelodromeFactoryClonable is BaseStrategy {
             veloBalance = velo.balanceOf(address(this));
         }
 
-        // sell rewards for more want, have to add from both sides
-        uint256 amountToSwapToken0 = veloBalance / 2;
-        uint256 amountToSwapToken1 = veloBalance - amountToSwapToken0;
+        // don't bother if we don't get at least 10 VELO
+        if (veloBalance > 10e18) {
+            // sell rewards for more want, have to add from both sides.
+            uint256 amountToSwapToken0 = veloBalance / 2;
+            uint256 amountToSwapToken1 = veloBalance - amountToSwapToken0;
 
-        // if stable, do some more fancy math, not as easy as swapping half
-        if (isStablePool) {
-            uint256 ratio = router.quoteStableLiquidityRatio(
+            // if stable, do some more fancy math, not as easy as swapping half
+            if (isStablePool) {
+                uint256 ratio = router.quoteStableLiquidityRatio(
+                    address(poolToken0),
+                    address(poolToken1),
+                    factory
+                );
+                amountToSwapToken0 = (veloBalance * 1e18) / (ratio + 1e18);
+                amountToSwapToken1 = veloBalance - amountToSwapToken0;
+            }
+
+            if (address(poolToken0) != address(velo)) {
+                router.swapExactTokensForTokens(
+                    amountToSwapToken0,
+                    0,
+                    swapRouteForToken0,
+                    address(this),
+                    block.timestamp
+                );
+            }
+
+            if (address(poolToken1) != address(velo)) {
+                router.swapExactTokensForTokens(
+                    amountToSwapToken1,
+                    0,
+                    swapRouteForToken1,
+                    address(this),
+                    block.timestamp
+                );
+            }
+
+            // check and see what we have after swaps
+            uint256 balanceToken0 = poolToken0.balanceOf(address(this));
+            uint256 balanceToken1 = poolToken1.balanceOf(address(this));
+
+            // deposit our liquidity, should have minimal remaining in strategy after this
+            router.addLiquidity(
                 address(poolToken0),
                 address(poolToken1),
-                factory
-            );
-            amountToSwapToken0 = (veloBalance * 1e18) / (ratio + 1e18);
-            amountToSwapToken1 = veloBalance - amountToSwapToken0;
-        }
-
-        if (address(poolToken0) != address(velo)) {
-            router.swapExactTokensForTokens(
-                amountToSwapToken0,
-                0,
-                swapRouteForToken0,
+                isStablePool,
+                balanceToken0,
+                balanceToken1,
+                1,
+                1,
                 address(this),
                 block.timestamp
             );
         }
-
-        if (address(poolToken1) != address(velo)) {
-            router.swapExactTokensForTokens(
-                amountToSwapToken1,
-                0,
-                swapRouteForToken1,
-                address(this),
-                block.timestamp
-            );
-        }
-
-        // check and see what we have after swaps
-        uint256 balanceToken0 = poolToken0.balanceOf(address(this));
-        uint256 balanceToken1 = poolToken1.balanceOf(address(this));
-
-        // deposit our liquidity, should have minimal remaining in strategy after this
-        router.addLiquidity(
-            address(poolToken0),
-            address(poolToken1),
-            isStablePool,
-            balanceToken0,
-            balanceToken1,
-            1,
-            1,
-            address(this),
-            block.timestamp
-        );
 
         // serious loss should never happen, but if it does (for instance, if Ramses is hacked), let's record it accurately
         uint256 assets = estimatedTotalAssets();
@@ -568,9 +574,9 @@ contract StrategyVelodromeFactoryClonable is BaseStrategy {
             return false;
         }
 
-        StrategyParams memory params = vault.strategies(address(this));
-        // harvest no matter what once we reach our maxDelay
-        if (block.timestamp - params.lastReport > maxReportDelay) {
+        // harvest if we have a profit to claim at our upper limit without considering gas price
+        uint256 claimableProfit = claimableProfitInUsdc();
+        if (claimableProfit > harvestProfitMaxInUsdc) {
             return true;
         }
 
@@ -584,8 +590,14 @@ contract StrategyVelodromeFactoryClonable is BaseStrategy {
             return true;
         }
 
-        // harvest if we hit our minDelay, but only if our gas price is acceptable
-        if (block.timestamp - params.lastReport > minReportDelay) {
+        // harvest if we have a sufficient profit to claim, but only if our gas price is acceptable
+        if (claimableProfit > harvestProfitMinInUsdc) {
+            return true;
+        }
+
+        StrategyParams memory params = vault.strategies(address(this));
+        // harvest regardless of profit once we reach our maxDelay
+        if (block.timestamp - params.lastReport > maxReportDelay) {
             return true;
         }
 
@@ -596,6 +608,32 @@ contract StrategyVelodromeFactoryClonable is BaseStrategy {
 
         // otherwise, we don't harvest
         return false;
+    }
+
+    /// @notice Calculates the profit if all claimable assets were sold for USDC (6 decimals).
+    /// @dev Uses Chainlink's feed registry.
+    /// @return Total return in USDC from selling claimable CRV and CVX.
+    function claimableProfitInUsdc() public view returns (uint256) {
+        // do a getAmountsOut here, but rough price is $0.10
+
+        // Oracle returns prices as 6 decimals, so multiply by claimable amount and divide by token decimals (1e18)
+        return (0.1e6 * claimableRewards()) / 1e18;
+    }
+
+    /**
+     * @notice
+     *  Here we set various parameters to optimize our harvestTrigger.
+     * @param _harvestProfitMinInUsdc The amount of profit (in USDC, 6 decimals)
+     *  that will trigger a harvest if gas price is acceptable.
+     * @param _harvestProfitMaxInUsdc The amount of profit in USDC that
+     *  will trigger a harvest regardless of gas price.
+     */
+    function setHarvestTriggerParams(
+        uint256 _harvestProfitMinInUsdc,
+        uint256 _harvestProfitMaxInUsdc
+    ) external onlyVaultManagers {
+        harvestProfitMinInUsdc = _harvestProfitMinInUsdc;
+        harvestProfitMaxInUsdc = _harvestProfitMaxInUsdc;
     }
 
     /// @notice Convert our keeper's eth cost into want
@@ -628,13 +666,5 @@ contract StrategyVelodromeFactoryClonable is BaseStrategy {
     /// @param _veloVoter Address of our velodrome voter.
     function setVoter(address _veloVoter) external onlyGovernance {
         veloVoter = _veloVoter;
-    }
-
-    /// @notice Use this to set or update reward tokens to claim from our gauge.
-    /// @dev Usually we should only have VELO, but occasionally other tokens too.
-    ///  Only governance can set this.
-    /// @param _rewards Reward tokens to claim from this pool's gauge.
-    function setRewards(address[] memory _rewards) external onlyGovernance {
-        rewardTokens = _rewards;
     }
 }

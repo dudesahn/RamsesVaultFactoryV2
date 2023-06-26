@@ -10,7 +10,7 @@ def harvest_strategy(
     gov,
     profit_whale,
     profit_amount,
-    target,
+    destination_strategy,
 ):
 
     # reset everything with a sleep and mine
@@ -23,38 +23,27 @@ def harvest_strategy(
     ####### ADD LOGIC AS NEEDED FOR CLAIMING/SENDING REWARDS TO STRATEGY #######
     # usually this is automatic, but it may need to be externally triggered
 
-    # if we have no staked assets, and we are taking profit (when closing out a strategy) then we will need to ignore health check
+    # if we have zero debt then we are potentially taking profit (when closing out a strategy) then we will need to ignore health check
     # we also may have profit and no assets in edge cases
-    if strategy.stakedBalance() == 0:
+    vault = interface.IVaultFactory045(strategy.vault())
+    if vault.strategies(strategy)["totalDebt"] == 0:
         strategy.setDoHealthCheck(False, {"from": gov})
         print("\nTurned off health check!\n")
 
-    # when in emergency exit we don't enter prepare return, so we should manually claim rewards when withdrawing for convex. curve auto-claims
-    if target == 0:
-        if strategy.emergencyExit():
-            strategy.setClaimRewards(True, {"from": gov})
-        else:
-            if strategy.claimRewards():
-                strategy.setClaimRewards(False, {"from": gov})
-
     # we can use the tx for debugging if needed
     tx = strategy.harvest({"from": gov})
-    profit = tx.events["Harvested"]["profit"] / (10 ** token.decimals())
-    loss = tx.events["Harvested"]["loss"] / (10 ** token.decimals())
+    profit = tx.events["Harvested"]["profit"]
+    loss = tx.events["Harvested"]["loss"]
 
-    # assert there are no loose funds in strategy after a harvest
-    assert strategy.balanceOfWant() == 0
-
-    # our trade handler takes action, sending out rewards tokens and sending back in profit
-    if use_yswaps:
-        trade_handler_action(strategy, token, gov, profit_whale, profit_amount, target)
+    # our trade handler takes action, sending out rewards tokens and sending back in profit, but don't need it here.
+    extra = 0
 
     # reset everything with a sleep and mine
     chain.sleep(1)
     chain.mine(1)
 
-    # return our profit, loss
-    return (profit, loss)
+    # return our profit, loss, extra value from trade handler
+    return (profit, loss, extra)
 
 
 # simulate the trade handler sweeping out assets and sending back profit
@@ -64,32 +53,10 @@ def trade_handler_action(
     gov,
     profit_whale,
     profit_amount,
-    target,
 ):
     ####### ADD LOGIC AS NEEDED FOR SENDING REWARDS OUT AND PROFITS IN #######
-    # get our tokens from our strategy
-    crv = interface.IERC20(strategy.crv())
-    cvxBalance = 0
-    if target == 0:
-        cvx = interface.IERC20(strategy.convexToken())
-        cvxBalance = cvx.balanceOf(strategy)
-
-    crvBalance = crv.balanceOf(strategy)
-    if crvBalance > 0:
-        crv.transfer(token, crvBalance, {"from": strategy})
-        print("CRV rewards present")
-        assert crv.balanceOf(strategy) == 0
-
-    if cvxBalance > 0:
-        cvx.transfer(token, cvxBalance, {"from": strategy})
-        print("CVX rewards present")
-        assert cvx.balanceOf(strategy) == 0
-
-    # send our profits back in
-    if crvBalance > 0 or cvxBalance > 0:
-        token.transfer(strategy, profit_amount, {"from": profit_whale})
-        print("Rewards converted into profit and returned")
-        assert strategy.balanceOfWant() > 0
+    # not needed for velodrome
+    return
 
 
 # do a check on our strategy and vault of choice
@@ -169,37 +136,48 @@ def check_status(
 
 
 # get our whale some tokens if we don't naturally have one already
-# def create_whale(
-#     token,
-#     whale,
-# ):
-#     # make sure our whale address has plenty of tokens
-#     usdc = interface.IERC20("0x7F5c764cBc14f9669B88837ca1490cCa17c31607")
-#     blue = interface.IERC20("0xa50B23cDfB2eC7c590e84f403256f67cE6dffB84")
-#     router_v2 = Contract("0xa062aE8A9c5e11aaA026fc2670B0D65cCc8B2858")
-#     v1_lp = accounts.at("0x662f16652A242aaD3C938c80864688e4d9B26A5e", force=True)
-#
-#     # first, approve on V2 router
-#     usdc.approve(router_v2, 2**256 - 1, {"from": v1_lp})
-#     blue.approve(router_v2, 2**256 - 1, {"from": v1_lp})
-#     router_v2.addLiquidity(
-#         usdc,
-#         blue,
-#         False,
-#         usdc.balanceOf(v1_lp),
-#         blue.balanceOf(v1_lp),
-#         1,
-#         1,
-#         whale,
-#         2**256 - 1,
-#         {"from": v1_lp},
-#     )
-#
-#     # sleep 4 days so we have rewards
-#     chain.sleep(4 * 86400)
-#     chain.mine(100)
-#
-#     # check that we have tokens
-#     token_bal = token.balanceOf(whale)
-#     assert token_bal > 0
-#     print("Token balance:", token_bal / 1e18)
+def create_whale(
+    token,
+    whale,
+    gauge,
+):
+    # make sure our whale address has plenty of tokens
+    usdc = interface.IERC20("0x7F5c764cBc14f9669B88837ca1490cCa17c31607")
+    blue = interface.IERC20("0xa50B23cDfB2eC7c590e84f403256f67cE6dffB84")
+    router_v2 = Contract("0xa062aE8A9c5e11aaA026fc2670B0D65cCc8B2858")
+    v1_lp = accounts.at("0x662f16652A242aaD3C938c80864688e4d9B26A5e", force=True)
+
+    # first, approve on V2 router
+    usdc.approve(router_v2, 2**256 - 1, {"from": v1_lp})
+    blue.approve(router_v2, 2**256 - 1, {"from": v1_lp})
+    router_v2.addLiquidity(
+        usdc,
+        blue,
+        False,
+        usdc.balanceOf(v1_lp),
+        blue.balanceOf(v1_lp),
+        1,
+        1,
+        whale,
+        2**256 - 1,
+        {"from": v1_lp},
+    )
+
+    # sleep 4 days so we have rewards
+    chain.sleep(4 * 86400)
+    chain.mine(100)
+
+    # have our voter queue up rewards
+    voter = accounts.at("0x41C914ee0c7E1A5edCD0295623e6dC557B5aBf3C", force=True)
+    velo = interface.IERC20(gauge.rewardToken())
+    velo.approve(gauge, 2**256 - 1, {"from": voter})
+    velo_whale = accounts.at("0xFAf8FD17D9840595845582fCB047DF13f006787d", force=True)
+    velo.transfer(voter, 100_000e18, {"from": velo_whale})
+    gauge.notifyRewardAmount(100_000e18, {"from": voter})
+    chain.sleep(1)
+    chain.mine(1)
+
+    # check that we have tokens
+    token_bal = token.balanceOf(whale)
+    assert token_bal > 0
+    print("Token balance:", token_bal / 1e18)

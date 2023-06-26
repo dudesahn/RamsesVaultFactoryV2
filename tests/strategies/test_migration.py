@@ -1,5 +1,5 @@
 import pytest
-from utils import harvest_strategy
+from utils import harvest_strategy, check_status
 from brownie import accounts, interface, chain
 import brownie
 
@@ -16,27 +16,22 @@ def test_migration(
     profit_whale,
     profit_amount,
     target,
-    trade_factory,
     use_yswaps,
     is_slippery,
     no_profit,
-    which_strategy,
-    pid,
-    new_proxy,
-    booster,
-    convex_token,
+    is_gmx,
     gauge,
-    crv,
-    frax_booster,
-    frax_pid,
-    staking_address,
-    fxs,
+    health_check,
+    strategy_name,
+    to_sweep,
+    route0,
+    route1,
 ):
 
     ## deposit to the vault after approving
     token.approve(vault, 2**256 - 1, {"from": whale})
     vault.deposit(amount, {"from": whale})
-    (profit, loss) = harvest_strategy(
+    (profit, loss, extra) = harvest_strategy(
         use_yswaps,
         strategy,
         token,
@@ -53,91 +48,53 @@ def test_migration(
     chain.sleep(sleep_time)
 
     ######### THIS WILL NEED TO BE UPDATED BASED ON STRATEGY CONSTRUCTOR #########
-    if which_strategy == 0:  # convex
-        new_strategy = gov.deploy(
-            contract_name,
-            vault,
-            trade_factory,
-            pid,
-            10_000 * 1e6,
-            25_000 * 1e6,
-            booster,
-            convex_token,
-        )
-    elif which_strategy == 1:  # curve
-        new_strategy = gov.deploy(
-            contract_name,
-            vault,
-            trade_factory,
-            new_proxy,
-            gauge,
-        )
-    else:  # frax
-        new_strategy = gov.deploy(
-            contract_name,
-            vault,
-            trade_factory,
-            frax_pid,
-            staking_address,
-            10_000 * 1e6,
-            25_000 * 1e6,
-            frax_booster,
-        )
+    new_strategy = gov.deploy(
+        contract_name,
+        vault,
+        gauge,
+        route0,
+        route1,
+    )
 
-    # since curve strats auto-detect gauge tokens in voter, all strategies will show the same TVL
-    # this is why we can never have 2 curve strategies for the same gauge, even on different vaults, at the same time
-    if which_strategy != 1:
-        # can we harvest an unactivated strategy? should be no
-        tx = new_strategy.harvestTrigger(0, {"from": gov})
-        print("\nShould we harvest? Should be False.", tx)
-        assert tx == False
+    # can we harvest an unactivated strategy? should be no
+    tx = new_strategy.harvestTrigger(0, {"from": gov})
+    print("\nShould we harvest? Should be False.", tx)
+    assert tx == False
+
+    # if gmx, want to harvest again so we can get some funds in vesting
+    if is_gmx:
+        (profit, loss, extra) = harvest_strategy(
+            is_gmx,
+            strategy,
+            token,
+            gov,
+            profit_whale,
+            profit_amount,
+            target,
+        )
 
     ######### ADD LOGIC TO TEST CLAIMING OF ASSETS FOR TRANSFER TO NEW STRATEGY AS NEEDED #########
-    # for some reason withdrawing via our user vault doesn't include the same getReward() call that the staking pool does natively
-    # since emergencyExit doesn't enter prepareReturn, we have to manually claim these rewards
-    # also, FXS profit accrues every block, so we will still get some dust rewards after we exit as well if we were to call getReward() again
-    if which_strategy == 2:
-        with brownie.reverts():
-            vault.migrateStrategy(strategy, new_strategy, {"from": gov})
-        # wait another week so our frax LPs are unlocked, need to do this when reducing debt or withdrawing
-        chain.sleep(86400 * 7)
-        chain.mine(1)
-
-        user_vault = interface.IFraxVault(strategy.userVault())
-        user_vault.getReward({"from": gov})
-
-    # we don't need to do this, but good to do so for checking on our CRV
-    if which_strategy == 1:
-        new_proxy.harvest(gauge, {"from": strategy})
-
-    # migrate our old strategy, need to claim rewards for convex when withdrawing for convex
-    if which_strategy == 0:
-        strategy.setClaimRewards(True, {"from": gov})
+    # since migrating doesn't enter prepareReturn, we may have to manually claim rewards
+    # claim VELO rewards
+    gauge.getReward(strategy.address, {"from": strategy})
     vault.migrateStrategy(strategy, new_strategy, {"from": gov})
 
-    # if a curve strat, whitelist on our strategy proxy
-    if which_strategy == 1:
-        new_proxy.approveStrategy(strategy.gauge(), new_strategy, {"from": gov})
+    # gmx has a two-step migration, have to accept it on the new strategy too
+    if is_gmx:
+        new_strategy.acceptTransfer(strategy, {"from": gov})
 
     ####### ADD LOGIC TO MAKE SURE ASSET TRANSFER WENT AS EXPECTED #######
-    assert crv.balanceOf(strategy) == 0
-    assert crv.balanceOf(new_strategy) > 0
-
-    if which_strategy != 1:
-        assert convex_token.balanceOf(strategy) == 0
-        assert convex_token.balanceOf(new_strategy) > 0
-
-    if which_strategy == 2:
-        assert fxs.balanceOf(strategy) == 0
-        assert fxs.balanceOf(new_strategy) > 0
+    assert to_sweep.balanceOf(strategy) == 0
+    assert to_sweep.balanceOf(new_strategy) > 0
+    print("\nBalance of token:", to_sweep.balanceOf(new_strategy) / 1e18, "\n")
 
     # assert that our old strategy is empty
     updated_total_old = strategy.estimatedTotalAssets()
     assert updated_total_old == 0
 
-    # harvest to get funds back in new strategy
-    (profit, loss) = harvest_strategy(
-        use_yswaps,
+    # harvest to get funds back in new strategy, and take profit from our transferred amount
+    (profit, loss, extra) = harvest_strategy(
+        is_gmx,
         new_strategy,
         token,
         gov,
@@ -145,24 +102,48 @@ def test_migration(
         profit_amount,
         target,
     )
+    assert profit > 0
     new_strat_balance = new_strategy.estimatedTotalAssets()
+    assert new_strat_balance > 0
 
-    # confirm that we have the same amount of assets in our new strategy as old
+    # harvest again to take our profit if needed
+    if use_yswaps or is_gmx:
+        strategy_params = check_status(new_strategy, vault)
+        old_gain = strategy_params["totalGain"]
+        (profit, loss, extra) = harvest_strategy(
+            is_gmx,
+            new_strategy,
+            token,
+            gov,
+            profit_whale,
+            profit_amount,
+            target,
+        )
+
+        # check our current status
+        print("\nAfter yswaps extra harvest")
+        strategy_params = check_status(new_strategy, vault)
+
+        # make sure we recorded our gain properly
+        if not no_profit:
+            assert strategy_params["totalGain"] > old_gain
+
+    # confirm that we have the same amount of assets in our new strategy as old or have profited
+    # realistically we won't have new assets in the strategy yet, as our profit from the first profitable harvest is back in the vault
     if no_profit:
         assert pytest.approx(new_strat_balance, rel=RELATIVE_APPROX) == total_old
     else:
-        assert new_strat_balance > total_old
+        assert new_strat_balance >= total_old
 
     # record our new assets
     vault_new_assets = vault.totalAssets()
 
     # simulate earnings
     chain.sleep(sleep_time)
-    chain.mine(1)
 
     # Test out our migrated strategy, confirm we're making a profit
-    (profit, loss) = harvest_strategy(
-        use_yswaps,
+    (profit, loss, extra) = harvest_strategy(
+        is_gmx,
         new_strategy,
         token,
         gov,
@@ -194,27 +175,22 @@ def test_empty_migration(
     profit_whale,
     profit_amount,
     target,
-    trade_factory,
     use_yswaps,
     is_slippery,
     RELATIVE_APPROX,
-    which_strategy,
-    pid,
-    new_proxy,
-    booster,
-    convex_token,
+    is_gmx,
     gauge,
-    crv,
-    frax_booster,
-    frax_pid,
-    staking_address,
+    health_check,
+    strategy_name,
+    route0,
+    route1,
 ):
 
     ## deposit to the vault after approving
     token.approve(vault, 2**256 - 1, {"from": whale})
     vault.deposit(amount, {"from": whale})
-    (profit, loss) = harvest_strategy(
-        use_yswaps,
+    (profit, loss, extra) = harvest_strategy(
+        is_gmx,
         strategy,
         token,
         gov,
@@ -230,46 +206,18 @@ def test_empty_migration(
     chain.sleep(sleep_time)
 
     ######### THIS WILL NEED TO BE UPDATED BASED ON STRATEGY CONSTRUCTOR #########
-    if which_strategy == 0:  # convex
-        new_strategy = gov.deploy(
-            contract_name,
-            vault,
-            trade_factory,
-            pid,
-            10_000 * 1e6,
-            25_000 * 1e6,
-            booster,
-            convex_token,
-        )
-    elif which_strategy == 1:  # curve
-        new_strategy = gov.deploy(
-            contract_name,
-            vault,
-            trade_factory,
-            new_proxy,
-            gauge,
-        )
-    else:  # frax
-        new_strategy = gov.deploy(
-            contract_name,
-            vault,
-            trade_factory,
-            frax_pid,
-            staking_address,
-            10_000 * 1e6,
-            25_000 * 1e6,
-            frax_booster,
-        )
-
-    if which_strategy == 2:
-        # wait another week so our frax LPs are unlocked, need to do this when reducing debt or withdrawing
-        chain.sleep(86400 * 7)
-        chain.mine(1)
+    new_strategy = gov.deploy(
+        contract_name,
+        vault,
+        gauge,
+        route0,
+        route1,
+    )
 
     # set our debtRatio to zero so our harvest sends all funds back to vault
     vault.updateStrategyDebtRatio(strategy, 0, {"from": gov})
-    (profit, loss) = harvest_strategy(
-        use_yswaps,
+    (profit, loss, extra) = harvest_strategy(
+        is_gmx,
         strategy,
         token,
         gov,
@@ -279,9 +227,9 @@ def test_empty_migration(
     )
 
     # yswaps needs another harvest to get the final bit of profit to the vault
-    if use_yswaps:
-        (profit, loss) = harvest_strategy(
-            use_yswaps,
+    if use_yswaps or is_gmx:
+        (profit, loss, extra) = harvest_strategy(
+            is_gmx,
             strategy,
             token,
             gov,
@@ -298,8 +246,8 @@ def test_empty_migration(
 
         # turn off health check since taking profit on no debt
         strategy.setDoHealthCheck(False, {"from": gov})
-        (profit, loss) = harvest_strategy(
-            use_yswaps,
+        (profit, loss, extra) = harvest_strategy(
+            is_gmx,
             strategy,
             token,
             gov,
@@ -308,7 +256,11 @@ def test_empty_migration(
             target,
         )
 
-    assert strategy.estimatedTotalAssets() == 0
+    if is_gmx:
+        # normally we would send this away, but sMLP doesn't let us transfer zero
+        assert strategy.estimatedTotalAssets() == extra
+    else:
+        assert strategy.estimatedTotalAssets() == 0
 
     # make sure we transferred strat params over
     total_debt = vault.strategies(strategy)["totalDebt"]
@@ -317,8 +269,15 @@ def test_empty_migration(
     # migrate our old strategy
     vault.migrateStrategy(strategy, new_strategy, {"from": gov})
 
+    # gmx has a two-step migration, have to accept it on the new strategy too
+    if is_gmx:
+        new_strategy.acceptTransfer(strategy, {"from": gov})
+
     # new strategy should also be empty
-    assert new_strategy.estimatedTotalAssets() == 0
+    if is_gmx:
+        assert new_strategy.estimatedTotalAssets() == extra
+    else:
+        assert new_strategy.estimatedTotalAssets() == 0
 
     # make sure we took our gains and losses with us
     assert total_debt == vault.strategies(new_strategy)["totalDebt"]

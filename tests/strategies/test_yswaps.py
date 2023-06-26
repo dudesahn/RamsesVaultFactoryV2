@@ -16,9 +16,6 @@ def test_keepers_and_trade_handler(
     target,
     use_yswaps,
     keeper_wrapper,
-    trade_factory,
-    crv_whale,
-    which_strategy,
 ):
     # no testing needed if we're not using yswaps
     if not use_yswaps:
@@ -31,7 +28,7 @@ def test_keepers_and_trade_handler(
     newWhale = token.balanceOf(whale)
 
     # harvest, store asset amount
-    (profit, loss) = harvest_strategy(
+    (profit, loss, extra) = harvest_strategy(
         use_yswaps,
         strategy,
         token,
@@ -46,7 +43,7 @@ def test_keepers_and_trade_handler(
     chain.mine(1)
 
     # harvest, store new asset amount
-    (profit, loss) = harvest_strategy(
+    (profit, loss, extra) = harvest_strategy(
         use_yswaps,
         strategy,
         token,
@@ -106,29 +103,3 @@ def test_keepers_and_trade_handler(
     # can't set trade factory to zero
     with brownie.reverts():
         strategy.updateTradeFactory(ZERO_ADDRESS, {"from": gov})
-
-    # update our rewards again, shouldn't really change things
-    if which_strategy != 1:
-        strategy.updateRewards({"from": gov})
-    else:
-        strategy.updateRewards([], {"from": gov})
-
-    # check out our rewardsTokens
-    if which_strategy == 0:
-        # for convex, 0 position may be occupied by wrapped CVX token
-        with brownie.reverts():
-            strategy.rewardsTokens(1)
-    if which_strategy == 1:
-        with brownie.reverts():
-            strategy.rewardsTokens(0)
-    if which_strategy == 2:
-        with brownie.reverts():
-            strategy.rewardsTokens(0)
-
-    # only gov can update rewards
-    if which_strategy != 1:
-        with brownie.reverts():
-            strategy.updateRewards({"from": whale})
-    else:
-        with brownie.reverts():
-            strategy.updateRewards([], {"from": whale})

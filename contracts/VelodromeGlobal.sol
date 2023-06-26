@@ -112,28 +112,25 @@ contract VelodromeGlobal {
     IRegistry public registry;
 
     /// @notice Address to use for vault governance.
-    address public governance = 0xFEB4acf3df3cDEA7399794D0869ef76A6EfAff52;
+    address public governance = 0xF5d9D6133b698cE29567a90Ab35CfB874204B3A7;
 
     /// @notice Address to use for vault management.
-    address public management = 0x16388463d60FFE0661Cf7F1f31a7D658aC790ff7;
+    address public management = 0xea3a15df68fCdBE44Fdb0DB675B2b3A14a148b26;
 
     /// @notice Address to use for vault guardian.
-    address public guardian = 0x846e211e8ba920B353FB717631C015cf04061Cc9;
+    address public guardian = 0xea3a15df68fCdBE44Fdb0DB675B2b3A14a148b26;
 
     /// @notice Address to use for vault and strategy rewards.
-    address public treasury = 0x93A62dA5a14C80f265DAbC077fCEE437B1a0Efde;
+    address public treasury = 0x84654e35E504452769757AAe5a8C7C6599cBf954;
 
     /// @notice Address to use for strategy keepers.
-    address public keeper = 0x0D26E894C2371AB6D20d99A65E991775e3b5CAd7;
+    address public keeper = 0x9Ce0115381f009E382acd52761127eFF61061482;
 
     /// @notice Address to use for strategy health check.
-    address public healthCheck = 0xDDCea799fF1699e98EDF118e0629A974Df7DF012;
-
-    /// @notice Address to use for strategy trade factory.
-    address public tradeFactory = 0xcADBA199F3AC26F67f660C89d43eB1820b7f7a3b;
+    address public healthCheck = 0x3d8F58774611676fd196D26149C71a9142C45296;
 
     /// @notice Address to use for our network's base fee oracle.
-    address public baseFeeOracle = 0x1E7eFAbF282614Aa2543EDaA50517ef5a23c868b;
+    address public baseFeeOracle = 0xbf4A735F123A9666574Ff32158ce2F7b7027De9A;
 
     /// @notice Address of our Velodrome strategy implementation.
     address public velodromeStratImplementation;
@@ -142,10 +139,10 @@ contract VelodromeGlobal {
     uint256 public keepVELO;
 
     /// @notice The address of our Velodrome voter. This is where we send any keepVELO.
-    address public veloVoter = 0xBA11E7024cbEB1dd2B401C70A83E0d964144686C;
+    address public veloVoter = 0xF5d9D6133b698cE29567a90Ab35CfB874204B3A7;
 
     /// @notice Minimum profit size in USDC that we want to harvest.
-    uint256 public harvestProfitMinInUsdc = 7_500 * 1e6;
+    uint256 public harvestProfitMinInUsdc = 1_000 * 1e6;
 
     /// @notice Maximum profit size in USDC that we want to harvest (ignore gas price once we get here).
     uint256 public harvestProfitMaxInUsdc = 100_000 * 1e6;
@@ -265,16 +262,6 @@ contract VelodromeGlobal {
         healthCheck = _health;
     }
 
-    /// @notice Set the strategy trade factory address for the factory.
-    /// @dev Must be called by owner.
-    /// @param _tradeFactory Address of default trade factory for strategies.
-    function setTradeFactory(address _tradeFactory) external {
-        if (msg.sender != owner) {
-            revert();
-        }
-        tradeFactory = _tradeFactory;
-    }
-
     /// @notice Set the strategy base fee oracle address for the factory.
     /// @dev Must be called by owner or management. Oracle passes current network base
     ///  fee so strategy can avoid harvesting during periods of network congestion.
@@ -311,8 +298,8 @@ contract VelodromeGlobal {
     /// @notice Direct a specified percentage of CRV from every harvest to Yearn's CRV voter.
     /// @dev Must be called by owner.
     /// @param _keepVELO The percentage of CRV from each harvest that we send to our voter (out of 10,000).
-    /// @param _veloVoter The address of our Curve voter. This is where we send any keepVELO.
-    function setKeepCRV(uint256 _keepVELO, address _veloVoter) external {
+    /// @param _veloVoter The address of our Velo voter. This is where we send any keepVELO.
+    function setKeepVELO(uint256 _keepVELO, address _veloVoter) external {
         if (msg.sender != owner) {
             revert();
         }

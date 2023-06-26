@@ -21,14 +21,14 @@ def test_withdraw_after_donation_1(
     use_yswaps,
     RELATIVE_APPROX,
     vault_address,
-    which_strategy,
+    is_gmx,
 ):
 
     ## deposit to the vault after approving
     token.approve(vault, 2**256 - 1, {"from": whale})
     vault.deposit(amount, {"from": whale})
-    (profit, loss) = harvest_strategy(
-        use_yswaps,
+    (profit, loss, extra) = harvest_strategy(
+        is_gmx,
         strategy,
         token,
         gov,
@@ -77,11 +77,6 @@ def test_withdraw_after_donation_1(
     assert strategy.estimatedTotalAssets() > initial_strategy_assets
     assert strategy_params["totalDebt"] == initial_debt
 
-    if which_strategy == 2:
-        # wait another week so our frax LPs are unlocked, need to do this when reducing debt or withdrawing
-        chain.sleep(86400 * 7)
-        chain.mine(1)
-
     # have our whale withdraw half of the donation, this ensures that we test withdrawing without pulling from the staked balance
     to_withdraw = donation / 2
     if vault_address == ZERO_ADDRESS:
@@ -117,8 +112,8 @@ def test_withdraw_after_donation_1(
 
     # after our donation, best to use health check in case our donation profit is too big
     strategy.setDoHealthCheck(False, {"from": gov})
-    (profit, loss) = harvest_strategy(
-        use_yswaps,
+    (profit, loss, extra) = harvest_strategy(
+        is_gmx,
         strategy,
         token,
         gov,
@@ -132,7 +127,7 @@ def test_withdraw_after_donation_1(
     strategy_params = check_status(strategy, vault)
 
     # make sure things are going as we expect
-    if use_yswaps or no_profit:
+    if use_yswaps or no_profit or is_gmx:
         assert strategy_params["totalGain"] == donation
     else:
         assert strategy_params["totalGain"] > donation
@@ -148,12 +143,38 @@ def test_withdraw_after_donation_1(
         == (initial_debt - to_withdraw) / 2
     )
 
-    # harvest again so the strategy reports the profit
-    if use_yswaps:
-        print("Using ySwaps for harvests")
+    # sleep 5 days to allow share price to normalize
+    chain.sleep(86400 * 5)
+    chain.mine(1)
+
+    # check our current status
+    print("\nAfter sleep for share price")
+    strategy_params = check_status(strategy, vault)
+
+    # make sure things are going as we expect
+    if use_yswaps or is_gmx:
+        assert strategy_params["totalGain"] == donation
+    else:
+        assert strategy_params["totalGain"] > donation
+    assert strategy_params["debtRatio"] == 5000
+    if is_slippery:
+        assert pytest.approx(strategy_params["totalLoss"], rel=RELATIVE_APPROX) == 0
+    else:
+        assert strategy_params["totalLoss"] == 0
+    assert vault.debtOutstanding(strategy) == 0
+    assert vault.creditAvailable(strategy) > 0
+
+    # we haven't sent any profit back to the strategy yet
+    assert (
+        pytest.approx(strategy_params["totalDebt"], rel=RELATIVE_APPROX)
+        == (initial_debt - to_withdraw) / 2
+    )
+
+    # harvest again so the strategy reports the profit other than just the donation
+    if use_yswaps or is_gmx:
         old_gain = strategy_params["totalGain"]
-        (profit, loss) = harvest_strategy(
-            use_yswaps,
+        (profit, loss, extra) = harvest_strategy(
+            is_gmx,
             strategy,
             token,
             gov,
@@ -173,36 +194,12 @@ def test_withdraw_after_donation_1(
     # record our new strategy params
     new_params = vault.strategies(strategy)
 
-    # sleep 5 days to allow share price to normalize
-    chain.sleep(86400 * 5)
-    chain.mine(1)
-
-    # check our current status
-    print("\nAfter sleep for share price")
-    strategy_params = check_status(strategy, vault)
-
-    # make sure things are going as we expect
-    assert strategy_params["totalGain"] > donation
-    assert strategy_params["debtRatio"] == 5000
-    if is_slippery:
-        assert pytest.approx(strategy_params["totalLoss"], rel=RELATIVE_APPROX) == 0
-    else:
-        assert strategy_params["totalLoss"] == 0
-    assert vault.debtOutstanding(strategy) == 0
-    assert vault.creditAvailable(strategy) > 0
-
-    # we haven't sent any profit back to the strategy yet
-    assert (
-        pytest.approx(strategy_params["totalDebt"], rel=RELATIVE_APPROX)
-        == (initial_debt - to_withdraw) / 2
-    )
-
     # specifically check that our profit is greater than our donation or at least close if we get slippage on deposit/withdrawal and have no profit
-    profit = new_params["totalGain"] - prev_params["totalGain"]
+    current_profit = new_params["totalGain"] - prev_params["totalGain"]
     if no_profit:
-        assert pytest.approx(profit, rel=RELATIVE_APPROX) == donation
+        assert pytest.approx(current_profit, rel=RELATIVE_APPROX) == donation
     else:
-        assert profit > donation
+        assert current_profit > donation
 
     # check that we didn't add any more loss, or close if we get slippage on deposit/withdrawal
     if is_slippery:
@@ -215,12 +212,17 @@ def test_withdraw_after_donation_1(
 
     # assert that our vault total assets, multiplied by our debtRatio, is about equal to our estimated total assets plus credit available
     # we multiply this by the debtRatio of our strategy out of 10_000 total
-    # a vault only knows it has assets if the strategy has reported, and yswaps adds extra unrealized profit to the strategy since debtRatio > 0
+    # a vault only knows it has assets if the strategy has reported, and yswaps (or gmx) adds extra unrealized profit to the strategy since debtRatio > 0
     if use_yswaps:
         assert pytest.approx(
             strategy.estimatedTotalAssets() + vault.creditAvailable(strategy),
             rel=RELATIVE_APPROX,
         ) == int(vault.totalAssets() * new_params["debtRatio"] / 10_000 + profit_amount)
+    elif is_gmx:
+        assert pytest.approx(
+            strategy.estimatedTotalAssets() + vault.creditAvailable(strategy),
+            rel=RELATIVE_APPROX,
+        ) == int(vault.totalAssets() * new_params["debtRatio"] / 10_000 + extra)
     else:
         assert pytest.approx(
             strategy.estimatedTotalAssets() + vault.creditAvailable(strategy),
@@ -246,14 +248,14 @@ def test_withdraw_after_donation_2(
     use_yswaps,
     RELATIVE_APPROX,
     vault_address,
-    which_strategy,
+    is_gmx,
 ):
 
     ## deposit to the vault after approving
     token.approve(vault, 2**256 - 1, {"from": whale})
     vault.deposit(amount, {"from": whale})
-    (profit, loss) = harvest_strategy(
-        use_yswaps,
+    (profit, loss, extra) = harvest_strategy(
+        is_gmx,
         strategy,
         token,
         gov,
@@ -298,11 +300,6 @@ def test_withdraw_after_donation_2(
     # we should have more assets but the same debt
     assert strategy.estimatedTotalAssets() > initial_strategy_assets
     assert strategy_params["totalDebt"] == initial_debt
-
-    if which_strategy == 2:
-        # wait another week so our frax LPs are unlocked, need to do this when reducing debt or withdrawing
-        chain.sleep(86400 * 7)
-        chain.mine(1)
 
     # have our whale withdraw half of the donation, this ensures that we test withdrawing without pulling from the staked balance
     to_withdraw = donation / 2
@@ -339,8 +336,8 @@ def test_withdraw_after_donation_2(
 
     # after our donation, best to use health check in case our donation profit is too big
     strategy.setDoHealthCheck(False, {"from": gov})
-    (profit, loss) = harvest_strategy(
-        use_yswaps,
+    (profit, loss, extra) = harvest_strategy(
+        is_gmx,
         strategy,
         token,
         gov,
@@ -354,7 +351,7 @@ def test_withdraw_after_donation_2(
     strategy_params = check_status(strategy, vault)
 
     # make sure things are going as we expect
-    if use_yswaps or no_profit:
+    if use_yswaps or no_profit or is_gmx:
         assert strategy_params["totalGain"] == donation
     else:
         assert strategy_params["totalGain"] > donation
@@ -370,11 +367,10 @@ def test_withdraw_after_donation_2(
     assert vault.creditAvailable(strategy) == 0
 
     # harvest again so the strategy reports the profit
-    if use_yswaps:
-        print("Using ySwaps for harvests")
+    if use_yswaps or is_gmx:
         old_gain = strategy_params["totalGain"]
-        (profit, loss) = harvest_strategy(
-            use_yswaps,
+        (profit, loss, extra) = harvest_strategy(
+            is_gmx,
             strategy,
             token,
             gov,
@@ -431,11 +427,11 @@ def test_withdraw_after_donation_2(
     # assert that our vault total assets, multiplied by our debtRatio, is about equal to our estimated total assets plus credit available
     # we multiply this by the debtRatio of our strategy out of 10_000 total
     # a vault only knows it has assets if the strategy has reported. also, if strategy assets are zero, we don't get additional yswaps profit.
-    # so in this case, no difference expected between yswaps and non-yswaps strategies.
+    # so in this case, no difference expected between yswaps and non-yswaps strategies. gmx will have some dust left
     assert pytest.approx(
         strategy.estimatedTotalAssets() + vault.creditAvailable(strategy),
         rel=RELATIVE_APPROX,
-    ) == int(vault.totalAssets() * new_params["debtRatio"] / 10_000)
+    ) == int(vault.totalAssets() * new_params["debtRatio"] / 10_000 + extra)
 
 
 # lower debtRatio to 0, donate, withdraw more than the donation, then harvest
@@ -456,14 +452,14 @@ def test_withdraw_after_donation_3(
     use_yswaps,
     RELATIVE_APPROX,
     vault_address,
-    which_strategy,
+    is_gmx,
 ):
 
     ## deposit to the vault after approving
     token.approve(vault, 2**256 - 1, {"from": whale})
     vault.deposit(amount, {"from": whale})
-    (profit, loss) = harvest_strategy(
-        use_yswaps,
+    (profit, loss, extra) = harvest_strategy(
+        is_gmx,
         strategy,
         token,
         gov,
@@ -509,11 +505,6 @@ def test_withdraw_after_donation_3(
     assert strategy.estimatedTotalAssets() > initial_strategy_assets
     assert strategy_params["totalDebt"] == initial_debt
 
-    if which_strategy == 2:
-        # wait another week so our frax LPs are unlocked, need to do this when reducing debt or withdrawing
-        chain.sleep(86400 * 7)
-        chain.mine(1)
-
     # have our whale withdraw more than the donation, ensuring we pull from strategy
     to_withdraw = donation * 1.05
     if vault_address == ZERO_ADDRESS:
@@ -549,8 +540,8 @@ def test_withdraw_after_donation_3(
 
     # after our donation, best to use health check in case we have a big profit
     strategy.setDoHealthCheck(False, {"from": gov})
-    (profit, loss) = harvest_strategy(
-        use_yswaps,
+    (profit, loss, extra) = harvest_strategy(
+        is_gmx,
         strategy,
         token,
         gov,
@@ -564,7 +555,7 @@ def test_withdraw_after_donation_3(
     strategy_params = check_status(strategy, vault)
 
     # make sure things are going as we expect
-    if use_yswaps or no_profit:
+    if use_yswaps or no_profit or is_gmx:
         assert strategy_params["totalGain"] == donation
     else:
         assert strategy_params["totalGain"] > donation
@@ -580,11 +571,10 @@ def test_withdraw_after_donation_3(
     assert vault.creditAvailable(strategy) == 0
 
     # harvest again so the strategy reports the profit
-    if use_yswaps:
-        print("Using ySwaps for harvests")
+    if use_yswaps or is_gmx:
         old_gain = strategy_params["totalGain"]
-        (profit, loss) = harvest_strategy(
-            use_yswaps,
+        (profit, loss, extra) = harvest_strategy(
+            is_gmx,
             strategy,
             token,
             gov,
@@ -641,11 +631,11 @@ def test_withdraw_after_donation_3(
     # assert that our vault total assets, multiplied by our debtRatio, is about equal to our estimated total assets plus credit available
     # we multiply this by the debtRatio of our strategy out of 10_000 total
     # a vault only knows it has assets if the strategy has reported. also, if strategy assets are zero, we don't get additional yswaps profit.
-    # so in this case, no difference expected between yswaps and non-yswaps strategies.
+    # so in this case, no difference expected between yswaps and non-yswaps strategies. gmx will have some dust left
     assert pytest.approx(
         strategy.estimatedTotalAssets() + vault.creditAvailable(strategy),
         rel=RELATIVE_APPROX,
-    ) == int(vault.totalAssets() * new_params["debtRatio"] / 10_000)
+    ) == int(vault.totalAssets() * new_params["debtRatio"] / 10_000 + extra)
 
 
 # lower debtRatio to 50%, donate, withdraw more than the donation, then harvest
@@ -666,14 +656,14 @@ def test_withdraw_after_donation_4(
     use_yswaps,
     RELATIVE_APPROX,
     vault_address,
-    which_strategy,
+    is_gmx,
 ):
 
     ## deposit to the vault after approving
     token.approve(vault, 2**256 - 1, {"from": whale})
     vault.deposit(amount, {"from": whale})
-    (profit, loss) = harvest_strategy(
-        use_yswaps,
+    (profit, loss, extra) = harvest_strategy(
+        is_gmx,
         strategy,
         token,
         gov,
@@ -722,11 +712,6 @@ def test_withdraw_after_donation_4(
     assert strategy.estimatedTotalAssets() > initial_strategy_assets
     assert strategy_params["totalDebt"] == initial_debt
 
-    if which_strategy == 2:
-        # wait another week so our frax LPs are unlocked, need to do this when reducing debt or withdrawing
-        chain.sleep(86400 * 7)
-        chain.mine(1)
-
     # have our whale withdraw more than the donation, ensuring we pull from strategy
     to_withdraw = donation * 1.05
     if vault_address == ZERO_ADDRESS:
@@ -762,8 +747,8 @@ def test_withdraw_after_donation_4(
 
     # after our donation, best to use health check in case we have a big profit
     strategy.setDoHealthCheck(False, {"from": gov})
-    (profit, loss) = harvest_strategy(
-        use_yswaps,
+    (profit, loss, extra) = harvest_strategy(
+        is_gmx,
         strategy,
         token,
         gov,
@@ -777,7 +762,7 @@ def test_withdraw_after_donation_4(
     strategy_params = check_status(strategy, vault)
 
     # make sure things are going as we expect
-    if use_yswaps or no_profit:
+    if use_yswaps or no_profit or is_gmx:
         assert strategy_params["totalGain"] == donation
     else:
         assert strategy_params["totalGain"] > donation
@@ -794,11 +779,10 @@ def test_withdraw_after_donation_4(
     )
 
     # harvest again so the strategy reports the profit
-    if use_yswaps:
-        print("Using ySwaps for harvests")
+    if use_yswaps or is_gmx:
         old_gain = strategy_params["totalGain"]
-        (profit, loss) = harvest_strategy(
-            use_yswaps,
+        (profit, loss, extra) = harvest_strategy(
+            is_gmx,
             strategy,
             token,
             gov,
@@ -836,11 +820,17 @@ def test_withdraw_after_donation_4(
     assert vault.debtOutstanding(strategy) == 0
     assert vault.creditAvailable(strategy) > 0
 
-    # we haven't sent any profit back to the strategy yet
-    assert (
-        pytest.approx(strategy_params["totalDebt"], rel=RELATIVE_APPROX)
-        == (initial_debt - to_withdraw) / 2
-    )
+    # we haven't sent any profit back to the strategy yet, but yswaps or gmx will see it from the donation
+    if use_yswaps or is_gmx:
+        assert (
+            pytest.approx(strategy_params["totalDebt"], rel=RELATIVE_APPROX)
+            == (initial_debt - to_withdraw + donation) / 2
+        )
+    else:
+        assert (
+            pytest.approx(strategy_params["totalDebt"], rel=RELATIVE_APPROX)
+            == (initial_debt - to_withdraw) / 2
+        )
 
     # specifically check that our profit is greater than our donation or at least close if we get slippage on deposit/withdrawal and have no profit
     profit = new_params["totalGain"] - prev_params["totalGain"]
@@ -860,12 +850,17 @@ def test_withdraw_after_donation_4(
 
     # assert that our vault total assets, multiplied by our debtRatio, is about equal to our estimated total assets plus credit available
     # we multiply this by the debtRatio of our strategy out of 10_000 total
-    # a vault only knows it has assets if the strategy has reported, and yswaps adds extra unrealized profit to the strategy since debtRatio > 0
+    # a vault only knows it has assets if the strategy has reported, and yswaps (or gmx) adds extra unrealized profit to the strategy since debtRatio > 0
     if use_yswaps:
         assert pytest.approx(
             strategy.estimatedTotalAssets() + vault.creditAvailable(strategy),
             rel=RELATIVE_APPROX,
         ) == int(vault.totalAssets() * new_params["debtRatio"] / 10_000 + profit_amount)
+    elif is_gmx:
+        assert pytest.approx(
+            strategy.estimatedTotalAssets() + vault.creditAvailable(strategy),
+            rel=RELATIVE_APPROX,
+        ) == int(vault.totalAssets() * new_params["debtRatio"] / 10_000 + extra)
     else:
         assert pytest.approx(
             strategy.estimatedTotalAssets() + vault.creditAvailable(strategy),
@@ -891,14 +886,14 @@ def test_withdraw_after_donation_5(
     use_yswaps,
     RELATIVE_APPROX,
     vault_address,
-    which_strategy,
+    is_gmx,
 ):
 
     ## deposit to the vault after approving
     token.approve(vault, 2**256 - 1, {"from": whale})
     vault.deposit(amount, {"from": whale})
-    (profit, loss) = harvest_strategy(
-        use_yswaps,
+    (profit, loss, extra) = harvest_strategy(
+        is_gmx,
         strategy,
         token,
         gov,
@@ -929,11 +924,6 @@ def test_withdraw_after_donation_5(
     # we should have more assets but the same debt
     assert strategy.estimatedTotalAssets() > initial_strategy_assets
     assert strategy_params["totalDebt"] == initial_debt
-
-    if which_strategy == 2:
-        # wait another week so our frax LPs are unlocked, need to do this when reducing debt or withdrawing
-        chain.sleep(86400 * 7)
-        chain.mine(1)
 
     # have our whale withdraw more than the donation, ensuring we pull from strategy
     to_withdraw = donation * 1.05
@@ -967,8 +957,8 @@ def test_withdraw_after_donation_5(
 
     # after our donation, best to use health check in case we have a big profit
     strategy.setDoHealthCheck(False, {"from": gov})
-    (profit, loss) = harvest_strategy(
-        use_yswaps,
+    (profit, loss, extra) = harvest_strategy(
+        is_gmx,
         strategy,
         token,
         gov,
@@ -982,7 +972,7 @@ def test_withdraw_after_donation_5(
     strategy_params = check_status(strategy, vault)
 
     # make sure things are going as we expect
-    if use_yswaps or no_profit:
+    if use_yswaps or no_profit or is_gmx:
         assert strategy_params["totalGain"] == donation
     else:
         assert strategy_params["totalGain"] > donation
@@ -999,11 +989,10 @@ def test_withdraw_after_donation_5(
     )
 
     # harvest again so the strategy reports the profit
-    if use_yswaps:
-        print("Using ySwaps for harvests")
+    if use_yswaps or is_gmx:
         old_gain = strategy_params["totalGain"]
-        (profit, loss) = harvest_strategy(
-            use_yswaps,
+        (profit, loss, extra) = harvest_strategy(
+            is_gmx,
             strategy,
             token,
             gov,
@@ -1069,6 +1058,11 @@ def test_withdraw_after_donation_5(
             strategy.estimatedTotalAssets() + vault.creditAvailable(strategy),
             rel=RELATIVE_APPROX,
         ) == int(vault.totalAssets() * new_params["debtRatio"] / 10_000 + profit_amount)
+    elif is_gmx:
+        assert pytest.approx(
+            strategy.estimatedTotalAssets() + vault.creditAvailable(strategy),
+            rel=RELATIVE_APPROX,
+        ) == int(vault.totalAssets() * new_params["debtRatio"] / 10_000 + extra)
     else:
         assert pytest.approx(
             strategy.estimatedTotalAssets() + vault.creditAvailable(strategy),
@@ -1094,14 +1088,14 @@ def test_withdraw_after_donation_6(
     use_yswaps,
     RELATIVE_APPROX,
     vault_address,
-    which_strategy,
+    is_gmx,
 ):
 
     ## deposit to the vault after approving
     token.approve(vault, 2**256 - 1, {"from": whale})
     vault.deposit(amount, {"from": whale})
-    (profit, loss) = harvest_strategy(
-        use_yswaps,
+    (profit, loss, extra) = harvest_strategy(
+        is_gmx,
         strategy,
         token,
         gov,
@@ -1132,11 +1126,6 @@ def test_withdraw_after_donation_6(
     # we should have more assets but the same debt
     assert strategy.estimatedTotalAssets() > initial_strategy_assets
     assert strategy_params["totalDebt"] == initial_debt
-
-    if which_strategy == 2:
-        # wait another week so our frax LPs are unlocked, need to do this when reducing debt or withdrawing
-        chain.sleep(86400 * 7)
-        chain.mine(1)
 
     # have our whale withdraw half of the donation, this ensures that we test withdrawing without pulling from the staked balance
     to_withdraw = donation / 2
@@ -1170,8 +1159,8 @@ def test_withdraw_after_donation_6(
 
     # after our donation, best to use health check in case we have a big profit
     strategy.setDoHealthCheck(False, {"from": gov})
-    (profit, loss) = harvest_strategy(
-        use_yswaps,
+    (profit, loss, extra) = harvest_strategy(
+        is_gmx,
         strategy,
         token,
         gov,
@@ -1185,7 +1174,7 @@ def test_withdraw_after_donation_6(
     strategy_params = check_status(strategy, vault)
 
     # make sure things are going as we expect
-    if use_yswaps or no_profit:
+    if use_yswaps or no_profit or is_gmx:
         assert strategy_params["totalGain"] == donation
     else:
         assert strategy_params["totalGain"] > donation
@@ -1202,11 +1191,10 @@ def test_withdraw_after_donation_6(
     )
 
     # harvest again so the strategy reports the profit
-    if use_yswaps:
-        print("Using ySwaps for harvests")
+    if use_yswaps or is_gmx:
         old_gain = strategy_params["totalGain"]
-        (profit, loss) = harvest_strategy(
-            use_yswaps,
+        (profit, loss, extra) = harvest_strategy(
+            is_gmx,
             strategy,
             token,
             gov,
@@ -1272,6 +1260,11 @@ def test_withdraw_after_donation_6(
             strategy.estimatedTotalAssets() + vault.creditAvailable(strategy),
             rel=RELATIVE_APPROX,
         ) == int(vault.totalAssets() * new_params["debtRatio"] / 10_000 + profit_amount)
+    elif is_gmx:
+        assert pytest.approx(
+            strategy.estimatedTotalAssets() + vault.creditAvailable(strategy),
+            rel=RELATIVE_APPROX,
+        ) == int(vault.totalAssets() * new_params["debtRatio"] / 10_000 + extra)
     else:
         assert pytest.approx(
             strategy.estimatedTotalAssets() + vault.creditAvailable(strategy),
@@ -1296,7 +1289,7 @@ def test_withdraw_after_donation_7(
     profit_amount,
     target,
     vault_address,
-    which_strategy,
+    is_gmx,
     use_yswaps,
     RELATIVE_APPROX,
 ):
@@ -1304,8 +1297,8 @@ def test_withdraw_after_donation_7(
     ## deposit to the vault after approving
     token.approve(vault, 2**256 - 1, {"from": whale})
     vault.deposit(amount, {"from": whale})
-    (profit, loss) = harvest_strategy(
-        use_yswaps,
+    (profit, loss, extra) = harvest_strategy(
+        is_gmx,
         strategy,
         token,
         gov,
@@ -1352,11 +1345,6 @@ def test_withdraw_after_donation_7(
     assert strategy.estimatedTotalAssets() > initial_strategy_assets
     assert strategy_params["totalDebt"] == initial_debt
 
-    if which_strategy == 2:
-        # wait another week so our frax LPs are unlocked, need to do this when reducing debt or withdrawing
-        chain.sleep(86400 * 7)
-        chain.mine(1)
-
     # have our whale withdraw more than the donation, ensuring we pull from strategy
     to_withdraw = donation * 1.05
     if vault_address == ZERO_ADDRESS:
@@ -1392,8 +1380,8 @@ def test_withdraw_after_donation_7(
 
     # after our donation, best to use health check in case our donation profit is too big
     strategy.setDoHealthCheck(False, {"from": gov})
-    (profit, loss) = harvest_strategy(
-        use_yswaps,
+    (profit, loss, extra) = harvest_strategy(
+        is_gmx,
         strategy,
         token,
         gov,
@@ -1407,7 +1395,7 @@ def test_withdraw_after_donation_7(
     strategy_params = check_status(strategy, vault)
 
     # make sure things are going as we expect
-    if use_yswaps or no_profit:
+    if use_yswaps or no_profit or is_gmx:
         assert strategy_params["totalGain"] == donation
     else:
         assert strategy_params["totalGain"] > donation
@@ -1423,11 +1411,10 @@ def test_withdraw_after_donation_7(
     assert vault.creditAvailable(strategy) == 0
 
     # harvest again so the strategy reports the profit
-    if use_yswaps:
-        print("Using ySwaps for harvests")
+    if use_yswaps or is_gmx:
         old_gain = strategy_params["totalGain"]
-        (profit, loss) = harvest_strategy(
-            use_yswaps,
+        (profit, loss, extra) = harvest_strategy(
+            is_gmx,
             strategy,
             token,
             gov,
@@ -1484,21 +1471,24 @@ def test_withdraw_after_donation_7(
     # assert that our vault total assets, multiplied by our debtRatio, is about equal to our estimated total assets plus credit available
     # we multiply this by the debtRatio of our strategy out of 10_000 total
     # a vault only knows it has assets if the strategy has reported. also, if strategy assets are zero, we don't get additional yswaps profit.
-    # so in this case, no difference expected between yswaps and non-yswaps strategies.
+    # so in this case, no difference expected between yswaps and non-yswaps strategies. gmx will have some dust unrealized profits.
     assert pytest.approx(
         strategy.estimatedTotalAssets() + vault.creditAvailable(strategy),
         rel=RELATIVE_APPROX,
-    ) == int(vault.totalAssets() * new_params["debtRatio"] / 10_000)
+    ) == int(vault.totalAssets() * new_params["debtRatio"] / 10_000 + extra)
 
     # check everywhere to make sure we emptied out the strategy
     if is_slippery:
         assert strategy.estimatedTotalAssets() <= 10
+        assert token.balanceOf(strategy) == 0
+    elif is_gmx:
+        assert strategy.estimatedTotalAssets() == extra
     else:
         assert strategy.estimatedTotalAssets() == 0
-    assert token.balanceOf(strategy) == 0
-    current_assets = vault.totalAssets()
+        assert token.balanceOf(strategy) == 0
 
     # assert that our total assets have gone up or stayed the same when accounting for the donation and withdrawal, or that we're close at least
+    current_assets = vault.totalAssets()
     if no_profit:
         assert (
             pytest.approx(donation - to_withdraw + prev_assets, rel=RELATIVE_APPROX)
@@ -1531,7 +1521,7 @@ def test_withdraw_after_donation_8(
     profit_amount,
     target,
     vault_address,
-    which_strategy,
+    is_gmx,
     use_yswaps,
     RELATIVE_APPROX,
 ):
@@ -1539,8 +1529,8 @@ def test_withdraw_after_donation_8(
     ## deposit to the vault after approving
     token.approve(vault, 2**256 - 1, {"from": whale})
     vault.deposit(amount, {"from": whale})
-    (profit, loss) = harvest_strategy(
-        use_yswaps,
+    (profit, loss, extra) = harvest_strategy(
+        is_gmx,
         strategy,
         token,
         gov,
@@ -1587,11 +1577,6 @@ def test_withdraw_after_donation_8(
     assert strategy.estimatedTotalAssets() > initial_strategy_assets
     assert strategy_params["totalDebt"] == initial_debt
 
-    if which_strategy == 2:
-        # wait another week so our frax LPs are unlocked, need to do this when reducing debt or withdrawing
-        chain.sleep(86400 * 7)
-        chain.mine(1)
-
     # have our whale withdraw half of the donation, this ensures that we test withdrawing without pulling from the staked balance
     to_withdraw = donation / 2
     if vault_address == ZERO_ADDRESS:
@@ -1627,8 +1612,8 @@ def test_withdraw_after_donation_8(
 
     # after our donation, best to use health check in case our donation profit is too big
     strategy.setDoHealthCheck(False, {"from": gov})
-    (profit, loss) = harvest_strategy(
-        use_yswaps,
+    (profit, loss, extra) = harvest_strategy(
+        is_gmx,
         strategy,
         token,
         gov,
@@ -1642,7 +1627,7 @@ def test_withdraw_after_donation_8(
     strategy_params = check_status(strategy, vault)
 
     # make sure things are going as we expect
-    if use_yswaps or no_profit:
+    if use_yswaps or no_profit or is_gmx:
         assert strategy_params["totalGain"] == donation
     else:
         assert strategy_params["totalGain"] > donation
@@ -1658,11 +1643,10 @@ def test_withdraw_after_donation_8(
     assert vault.creditAvailable(strategy) == 0
 
     # harvest again so the strategy reports the profit
-    if use_yswaps:
-        print("Using ySwaps for harvests")
+    if use_yswaps or is_gmx:
         old_gain = strategy_params["totalGain"]
-        (profit, loss) = harvest_strategy(
-            use_yswaps,
+        (profit, loss, extra) = harvest_strategy(
+            is_gmx,
             strategy,
             token,
             gov,
@@ -1681,7 +1665,6 @@ def test_withdraw_after_donation_8(
 
     # record our new strategy params
     new_params = vault.strategies(strategy)
-    current_assets = vault.totalAssets()
 
     # sleep 5 days to allow share price to normalize
     chain.sleep(86400 * 5)
@@ -1720,20 +1703,24 @@ def test_withdraw_after_donation_8(
     # assert that our vault total assets, multiplied by our debtRatio, is about equal to our estimated total assets plus credit available
     # we multiply this by the debtRatio of our strategy out of 10_000 total
     # a vault only knows it has assets if the strategy has reported. also, if strategy assets are zero, we don't get additional yswaps profit.
-    # so in this case, no difference expected between yswaps and non-yswaps strategies.
+    # so in this case, no difference expected between yswaps and non-yswaps strategies. gmx will have some dust unrealized profits.
     assert pytest.approx(
         strategy.estimatedTotalAssets() + vault.creditAvailable(strategy),
         rel=RELATIVE_APPROX,
-    ) == int(vault.totalAssets() * new_params["debtRatio"] / 10_000)
+    ) == int(vault.totalAssets() * new_params["debtRatio"] / 10_000 + extra)
 
     # check everywhere to make sure we emptied out the strategy
     if is_slippery:
         assert strategy.estimatedTotalAssets() <= 10
+        assert token.balanceOf(strategy) == 0
+    elif is_gmx:
+        assert strategy.estimatedTotalAssets() == extra
     else:
         assert strategy.estimatedTotalAssets() == 0
-    assert token.balanceOf(strategy) == 0
+        assert token.balanceOf(strategy) == 0
 
     # assert that our total assets have gone up or stayed the same when accounting for the donation and withdrawal, or that we're close at least
+    current_assets = vault.totalAssets()
     if no_profit:
         assert (
             pytest.approx(donation - to_withdraw + prev_assets, rel=RELATIVE_APPROX)

@@ -2,6 +2,7 @@ import pytest
 from brownie import config, Contract, ZERO_ADDRESS, chain, interface, accounts
 from eth_abi import encode_single
 import requests
+from utils import create_whale
 
 # Snapshots the chain before each test and reverts after test completion.
 @pytest.fixture(scope="function", autouse=True)
@@ -52,12 +53,15 @@ def token():
 
 
 @pytest.fixture(scope="function")
-def whale(amount, token):
+def whale(amount, token, gauge):
     # Totally in it for the tech
     # Update this with a large holder of your want token (the largest EOA holder of LP)
     whale = accounts.at(
-        "0x8166f06D50a65F82850878c951fcA29Af5Ea7Db2", force=True
-    )  # 0x8166f06D50a65F82850878c951fcA29Af5Ea7Db2, blu/USDC v2 gauge
+        "0x662f16652A242aaD3C938c80864688e4d9B26A5e", force=True
+    )  # 0x662f16652A242aaD3C938c80864688e4d9B26A5e, blu/USDC v1 pool
+
+    # make sure we'll have enough tokens
+    create_whale(token, whale, gauge)
 
     if token.balanceOf(whale) < 2 * amount:
         raise ValueError(
@@ -69,7 +73,7 @@ def whale(amount, token):
 # this is the amount of funds we have our whale deposit. adjust this as needed based on their wallet balance
 @pytest.fixture(scope="function")
 def amount(token):
-    amount = 0.1 * 10 ** token.decimals()  # 0.3 for blu/usdc!
+    amount = 0.3 * 10 ** token.decimals()  # 0.3 for blu/usdc!
     yield amount
 
 
@@ -77,8 +81,8 @@ def amount(token):
 def profit_whale(profit_amount, token):
     # ideally not the same whale as the main whale, or else they will lose money
     profit_whale = accounts.at(
-        "0x8166f06D50a65F82850878c951fcA29Af5Ea7Db2", force=True
-    )  # 0x8166f06D50a65F82850878c951fcA29Af5Ea7Db2, rETH pool, 7.7 tokens
+        "0x662f16652A242aaD3C938c80864688e4d9B26A5e", force=True
+    )  # 0x662f16652A242aaD3C938c80864688e4d9B26A5e, rETH pool, 7.7 tokens
     if token.balanceOf(profit_whale) < 5 * profit_amount:
         raise ValueError(
             "Our profit whale needs more funds. Find another whale or reduce your profit_amount variable."
@@ -167,7 +171,7 @@ def sleep_time():
     hour = 3600
 
     # change this one right here
-    hours_to_sleep = 24
+    hours_to_sleep = 12
 
     sleep_time = hour * hours_to_sleep
     yield sleep_time
@@ -276,6 +280,10 @@ elif chain_used == 10:  # optimism
         # token we can sweep out of strategy (use VELO v2)
         yield interface.IERC20("0x9560e827aF36c94D2Ac33a39bCE1Fe78631088Db")
 
+    @pytest.fixture(scope="session")
+    def keeper_wrapper(KeeperWrapper):
+        yield KeeperWrapper.at("0x9Ce0115381f009E382acd52761127eFF61061482")
+
 
 @pytest.fixture(scope="function")
 def vault(pm, gov, rewards, guardian, management, token, vault_address):
@@ -294,6 +302,11 @@ def vault(pm, gov, rewards, guardian, management, token, vault_address):
 
 #################### FIXTURES BELOW LIKELY NEED TO BE ADJUSTED FOR THIS REPO ####################
 
+# use this similarly to how we use use_yswaps
+@pytest.fixture(scope="session")
+def is_gmx():
+    yield False
+
 
 @pytest.fixture(scope="session")
 def target():
@@ -304,7 +317,7 @@ def target():
 # this should be a strategy from a different vault to check during migration
 @pytest.fixture(scope="session")
 def other_strategy():
-    yield Contract("0x3bCa26c3D49Af712ac74Af82De27665A610999E2")
+    yield Contract("0x4809143428Ed49D08978aDF209A4179d52ce5371")
 
 
 # replace the first value with the name of your strategy

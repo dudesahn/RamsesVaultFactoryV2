@@ -16,13 +16,14 @@ def test_remove_from_withdrawal_queue(
     profit_amount,
     target,
     use_yswaps,
+    is_gmx,
 ):
     ## deposit to the vault after approving
     starting_whale = token.balanceOf(whale)
     token.approve(vault, 2**256 - 1, {"from": whale})
     vault.deposit(amount, {"from": whale})
-    (profit, loss) = harvest_strategy(
-        use_yswaps,
+    (profit, loss, extra) = harvest_strategy(
+        is_gmx,
         strategy,
         token,
         gov,
@@ -33,8 +34,8 @@ def test_remove_from_withdrawal_queue(
 
     # simulate earnings, harvest
     chain.sleep(sleep_time)
-    (profit, loss) = harvest_strategy(
-        use_yswaps,
+    (profit, loss, extra) = harvest_strategy(
+        is_gmx,
         strategy,
         token,
         gov,
@@ -79,15 +80,15 @@ def test_revoke_strategy_from_vault(
     target,
     use_yswaps,
     RELATIVE_APPROX,
-    which_strategy,
+    is_gmx,
 ):
 
     ## deposit to the vault after approving
     starting_whale = token.balanceOf(whale)
     token.approve(vault, 2**256 - 1, {"from": whale})
     vault.deposit(amount, {"from": whale})
-    (profit, loss) = harvest_strategy(
-        use_yswaps,
+    (profit, loss, extra) = harvest_strategy(
+        is_gmx,
         strategy,
         token,
         gov,
@@ -107,12 +108,8 @@ def test_revoke_strategy_from_vault(
     # revoke and harvest
     vault.revokeStrategy(strategy.address, {"from": gov})
 
-    if which_strategy == 2:
-        # wait another week so our frax LPs are unlocked, need to do this when reducing debt or withdrawing
-        chain.sleep(86400 * 7)
-        chain.mine(1)
-    (profit, loss) = harvest_strategy(
-        use_yswaps,
+    (profit, loss, extra) = harvest_strategy(
+        is_gmx,
         strategy,
         token,
         gov,
@@ -122,9 +119,9 @@ def test_revoke_strategy_from_vault(
     )
 
     # harvest again to get the last of our profit with ySwaps
-    if use_yswaps:
-        (profit, loss) = harvest_strategy(
-            use_yswaps,
+    if is_gmx:
+        (profit, loss, extra) = harvest_strategy(
+            is_gmx,
             strategy,
             token,
             gov,
@@ -165,11 +162,6 @@ def test_revoke_strategy_from_vault(
     chain.sleep(86400 * 5)
     chain.mine(1)
 
-    if which_strategy == 2:
-        # wait another week so our frax LPs are unlocked
-        chain.sleep(86400 * 7)
-        chain.mine(1)
-
     # withdraw and confirm we made money, or at least that we have about the same (profit whale has to be different from normal whale)
     vault.withdraw({"from": whale})
     if no_profit:
@@ -188,12 +180,12 @@ def test_setters(
     whale,
     strategy,
     amount,
-    which_strategy,
     use_yswaps,
     profit_whale,
     profit_amount,
     target,
     strategist,
+    is_gmx,
 ):
     # deposit to the vault after approving
     starting_whale = token.balanceOf(whale)
@@ -208,30 +200,9 @@ def test_setters(
     strategy.setStrategist(gov, {"from": gov})
 
     ######### BELOW WILL NEED TO BE UPDATED BASED SETTERS OUR STRATEGY HAS #########
-    # special setter for frax
-    if which_strategy == 2:
-        strategy.setLockTime(90000 * 7, {"from": gov})
-
-        # whale can't call
-        with brownie.reverts():
-            strategy.setLockTime(90000, {"from": whale})
-        # can't be too short
-        with brownie.reverts():
-            strategy.setLockTime(100, {"from": gov})
-        # or too long
-        with brownie.reverts():
-            strategy.setLockTime(2**256 - 1, {"from": gov})
-
-        # set our deposit params
-        maxToStake = amount * 0.75
-        minToStake = 100
-        strategy.setDepositParams(minToStake, maxToStake, {"from": gov})
-        with brownie.reverts():
-            strategy.setDepositParams(maxToStake, minToStake, {"from": gov})
-
     # harvest our credit
-    (profit, loss) = harvest_strategy(
-        use_yswaps,
+    (profit, loss, extra) = harvest_strategy(
+        is_gmx,
         strategy,
         token,
         gov,
@@ -239,64 +210,6 @@ def test_setters(
         profit_amount,
         target,
     )
-    if which_strategy == 2:
-        total_staked = strategy.stakedBalance()
-        assert total_staked == maxToStake
-        assert strategy.estimatedTotalAssets() > total_staked
-
-        # get the rest of our funds staked
-        chain.sleep(1)
-        chain.mine(1)
-        strategy.setDepositParams(1e21, 1e29, {"from": gov})
-        strategy.harvest({"from": gov})
-        assert strategy.estimatedTotalAssets() >= amount
-
-    # check that we have claimable rewards, have to call for frax tho
-    if which_strategy == 2:
-        chain.sleep(86400 * 7)
-        chain.mine(1)
-        profit = strategy.claimableProfitInUsdc.call()
-        assert profit > 0
-        print("Claimable Profit:", profit / 1e6)
-    elif which_strategy == 0:
-        chain.sleep(86400 * 7)
-        chain.mine(1)
-        profit = strategy.claimableProfitInUsdc()
-        assert profit > 0
-        print("Claimable Profit:", profit / 1e6)
-
-    if which_strategy == 0:
-        strategy.setVoters(gov, gov, {"from": gov})
-        strategy.setLocalKeepCrvs(10, 10, {"from": gov})
-        strategy.setClaimRewards(True, {"from": gov})
-
-        # test our reverts as well
-        with brownie.reverts():
-            strategy.setLocalKeepCrvs(1000000, 0, {"from": gov})
-        with brownie.reverts():
-            strategy.setLocalKeepCrvs(0, 100000000, {"from": gov})
-    elif which_strategy == 1:
-        strategy.setVoter(gov, {"from": gov})
-        strategy.setLocalKeepCrv(10, {"from": gov})
-
-        # test our reverts as well
-        with brownie.reverts():
-            strategy.setLocalKeepCrv(1000000, {"from": gov})
-    else:
-        strategy.setVoters(gov, gov, gov, {"from": gov})
-        strategy.setLocalKeepCrvs(10, 10, 10, {"from": gov})
-
-        # test our reverts as well
-        with brownie.reverts():
-            strategy.setLocalKeepCrvs(1000000, 0, 0, {"from": gov})
-        with brownie.reverts():
-            strategy.setLocalKeepCrvs(0, 100000000, 0, {"from": gov})
-        with brownie.reverts():
-            strategy.setLocalKeepCrvs(0, 0, 10000000, {"from": gov})
-
-    strategy.setStrategist(strategist, {"from": gov})
-    name = strategy.name()
-    print("Strategy Name:", name)
 
 
 # test sweeping out tokens
@@ -312,12 +225,13 @@ def test_sweep(
     profit_amount,
     target,
     use_yswaps,
+    is_gmx,
 ):
     # deposit to the vault after approving
     token.approve(vault, 2**256 - 1, {"from": whale})
     vault.deposit(amount, {"from": whale})
-    (profit, loss) = harvest_strategy(
-        use_yswaps,
+    (profit, loss, extra) = harvest_strategy(
+        is_gmx,
         strategy,
         token,
         gov,
