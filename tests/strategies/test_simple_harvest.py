@@ -70,6 +70,10 @@ def test_simple_harvest(
     token1_balance = token1.balanceOf(strategy) / 1e18
     print("\n🧐 Token 0 Balance after Harvest (USDC):", token0_balance, token0.symbol())
     print("🧐 Token 1 Balance after Harvest (BLU):", token1_balance, token1.symbol())
+    efficiency = (token0.balanceOf(strategy) * 100) / (
+        gauge.userRewardPerTokenPaid(strategy) * 0.09 / 1e12
+    )
+    print("Volatile Vault swap leftover:", "{:,.4f}%".format(efficiency))
 
     # record this here so it isn't affected if we donate via ySwaps
     strategy_assets = strategy.estimatedTotalAssets()

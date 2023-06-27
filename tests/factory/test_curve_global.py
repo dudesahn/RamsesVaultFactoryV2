@@ -164,7 +164,8 @@ def test_permissioned_vault(
     )
 
     # turn on keeps
-    velo_global.setKeepVELO(69, velo_global.veloVoter(), {"from": gov})
+    velo_global.setKeepVELO(69, gov.address, {"from": gov})
+    assert velo_global.keepVELO() > 0
 
     # make sure not just anyone can create a permissioned vault
     if not tests_using_tenderly:
@@ -340,10 +341,10 @@ def test_velo_global_setters_and_views(
     velo_global.setTreasury(gov, {"from": gov})
     assert velo_global.treasury() == gov.address
 
+    velo_global.setBaseFeeOracle(gov, {"from": velo_global.management()})
     with brownie.reverts():
         velo_global.setBaseFeeOracle(gov, {"from": whale})
     velo_global.setBaseFeeOracle(gov, {"from": gov})
-    velo_global.setBaseFeeOracle(gov, {"from": velo_global.management()})
     assert velo_global.baseFeeOracle() == gov.address
 
     with brownie.reverts():
