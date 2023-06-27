@@ -120,6 +120,12 @@ def test_vault_deployment(
             tx = velo_global.createNewVaultsAndStrategies(
                 whale, route0, route1, {"from": whale}
             )
+        # if we check for something that isn't attached to the voter, we revert
+        with brownie.reverts("not a v2 gauge"):
+            tx = velo_global.latestStandardVaultFromGauge(whale, {"from": whale})
+
+        with brownie.reverts("not a v2 gauge"):
+            tx = velo_global.canCreateVaultPermissionlessly(whale, {"from": whale})
 
 
 def test_permissioned_vault(

@@ -32,8 +32,12 @@ interface IRegistry {
     ) external view returns (address);
 }
 
-interface IVeloGauge {
+interface IVelodromeGauge {
     function stakingToken() external view returns (address);
+}
+
+interface IVelodromeVoter {
+    function isGauge(address) external view returns (bool);
 }
 
 interface IVelodromeRouter {
@@ -401,7 +405,16 @@ contract VelodromeGlobal {
     function latestStandardVaultFromGauge(
         address _gauge
     ) public view returns (address) {
-        address lptoken = IVeloGauge(_gauge).stakingToken();
+        // make sure that our address is a gauge attached to the correct voter
+        IVelodromeVoter voter = IVelodromeVoter(
+            0x41C914ee0c7E1A5edCD0295623e6dC557B5aBf3C
+        );
+        if (!voter.isGauge(_gauge)) {
+            revert("not a v2 gauge");
+        }
+
+        // grab our lp token from our gauge
+        address lptoken = IVelodromeGauge(_gauge).stakingToken();
         address latest;
 
         // we only care about types 0-2 here, so enforce that
@@ -484,7 +497,9 @@ contract VelodromeGlobal {
                 "Vault already exists"
             );
         }
-        address lptoken = IVeloGauge(_gauge).stakingToken();
+
+        // get our lpToken from our gauge
+        address lptoken = IVelodromeGauge(_gauge).stakingToken();
 
         if (_permissionedUser) {
             // allow trusted users to input the name and symbol or deploy a factory version of a legacy vault
