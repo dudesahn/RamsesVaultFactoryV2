@@ -122,6 +122,8 @@ def test_stable_vault(
     target,
     use_yswaps,
     is_gmx,
+    stable_gauge,
+    to_sweep,
 ):
     print("We made it into the test!!!!")
     whale = stable_whale
@@ -131,6 +133,7 @@ def test_stable_vault(
     amount = stable_amount
     profit_whale = stable_profit_whale
     profit_amount = stable_profit_amount
+    gauge = stable_gauge
 
     ## deposit to the vault after approving
     starting_whale = token.balanceOf(whale)
@@ -152,8 +155,15 @@ def test_stable_vault(
     assert old_assets > 0
     assert strategy.estimatedTotalAssets() > 0
 
+    # print our routes
+    print("Token0 Route:", strategy.veloRouteToToken0())
+    print("Token1 Route:", strategy.veloRouteToToken1())
+
     # simulate profits
     chain.sleep(sleep_time)
+
+    # check how much velo is claimable to know how effective our selling is
+    earned_velo = strategy.claimableRewards() / 1e18
 
     # harvest, store new asset amount
     (profit, loss, extra) = harvest_strategy(
@@ -165,13 +175,22 @@ def test_stable_vault(
         profit_amount,
         target,
     )
+    print("Profit:", profit / 1e18)
+    # get ~0.0801384153% left in strategy after harvest
+
+    # check how much velo is claimable to know how effective our selling is
+    print("\nEarned after first harvest:", strategy.claimableRewards() / 1e18)
+    print("Reward per Token Paid", gauge.userRewardPerTokenPaid(strategy) / 1e18)
+    print("Rewards", gauge.rewards(strategy) / 1e18)
+    print("Strategy velo balance:", to_sweep.balanceOf(strategy) / 1e18)
+
     # check the balance of each of our tokens, should be close to zero
     token0 = interface.IERC20(strategy.poolToken0())
     token1 = interface.IERC20(strategy.poolToken1())
     token0_balance = token0.balanceOf(strategy) / 1e6
     token1_balance = token1.balanceOf(strategy) / 1e18
-    print("\n🧐 Token 0 Balance after Harvest (USDC):", token0_balance)
-    print("🧐 Token 1 Balance after Harvest (DOLA):", token1_balance)
+    print("\n🧐 Token 0 Balance after Harvest:", token0_balance, token0.symbol())
+    print("🧐 Token 1 Balance after Harvest:", token1_balance, token1.symbol())
 
     # record this here so it isn't affected if we donate via ySwaps
     strategy_assets = strategy.estimatedTotalAssets()
@@ -236,6 +255,8 @@ def test_velo_vault(
     target,
     use_yswaps,
     is_gmx,
+    velo_gauge,
+    to_sweep,
 ):
     print("We made it into the test!!!!")
     whale = velo_whale
@@ -245,6 +266,7 @@ def test_velo_vault(
     amount = velo_amount
     profit_whale = velo_profit_whale
     profit_amount = velo_profit_amount
+    gauge = velo_gauge
 
     ## deposit to the vault after approving
     starting_whale = token.balanceOf(whale)
@@ -279,13 +301,22 @@ def test_velo_vault(
         profit_amount,
         target,
     )
+    print("Profit:", profit / 1e18)
+    # ~ 0.1485977028% left in strategy after harvest
+
+    # check how much velo is claimable to know how effective our selling is
+    print("\nEarned after first harvest:", strategy.claimableRewards() / 1e18)
+    print("Reward per Token Paid", gauge.userRewardPerTokenPaid(strategy) / 1e18)
+    print("Rewards", gauge.rewards(strategy) / 1e18)
+    print("Strategy velo balance:", to_sweep.balanceOf(strategy) / 1e18)
+
     # check the balance of each of our tokens, should be close to zero
     token0 = interface.IERC20(strategy.poolToken0())
     token1 = interface.IERC20(strategy.poolToken1())
     token0_balance = token0.balanceOf(strategy) / 1e6
     token1_balance = token1.balanceOf(strategy) / 1e18
-    print("\n🧐 Token 0 Balance after Harvest (USDC):", token0_balance)
-    print("🧐 Token 1 Balance after Harvest (VELO):", token1_balance)
+    print("\n🧐 Token 0 Balance after Harvest:", token0_balance, token0.symbol())
+    print("🧐 Token 1 Balance after Harvest:", token1_balance, token1.symbol())
 
     # record this here so it isn't affected if we donate via ySwaps
     strategy_assets = strategy.estimatedTotalAssets()

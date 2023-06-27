@@ -87,6 +87,7 @@ def test_triggers(
         # check that we have claimable profit, need this for min and max profit checks below
         claimable_profit = strategy.claimableProfitInUsdc()
         assert claimable_profit > 0
+        print("Claimable Profit:", claimable_profit / 1e6)
 
         # update our minProfit so our harvest triggers true
         strategy.setHarvestTriggerParams(1, 1000000e6, {"from": gov})

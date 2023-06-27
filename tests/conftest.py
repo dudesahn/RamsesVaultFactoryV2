@@ -715,7 +715,7 @@ def velo_whale(velo_amount, velo_token, velo_gauge):
 # this is the amount of funds we have our whale deposit. adjust this as needed based on their wallet balance
 @pytest.fixture(scope="function")
 def velo_amount(velo_token):
-    velo_amount = 0.001 * 10 ** velo_token.decimals()  # 1 for DOLA/USDC
+    velo_amount = 0.05 * 10 ** velo_token.decimals()  # 0.05 for VELO/USDC
     yield velo_amount
 
 

@@ -28,17 +28,10 @@ interface IVelodromeRouter {
     function swapExactTokensForTokens(
         uint256 amountIn,
         uint256 amountOutMin,
-        Routes[] memory route,
+        Routes[] memory routes,
         address to,
         uint256 deadline
     ) external returns (uint256[] memory amounts);
-
-    // should we try and use this to calc on-chain expected? realistically not worth it?
-    function getAmountOut(
-        uint256 amountIn,
-        address tokenIn,
-        address tokenOut
-    ) external view returns (uint256 amount, bool stable);
 
     function quoteStableLiquidityRatio(
         address token0,
@@ -69,6 +62,11 @@ interface IVelodromePool {
     function token1() external view returns (address);
 
     function factory() external view returns (address);
+
+    function getAmountOut(
+        uint256 amountIn,
+        address tokenIn
+    ) external view returns (uint256 amount);
 }
 
 interface IDetails {
@@ -404,8 +402,8 @@ contract StrategyVelodromeFactoryClonable is BaseStrategy {
                     address(poolToken1),
                     factory
                 );
-                amountToSwapToken0 = (veloBalance * 1e18) / (ratio + 1e18);
-                amountToSwapToken1 = veloBalance - amountToSwapToken0;
+                amountToSwapToken1 = (veloBalance * ratio) / 1e18;
+                amountToSwapToken0 = veloBalance - amountToSwapToken1;
             }
 
             if (address(poolToken0) != address(velo)) {
@@ -609,14 +607,17 @@ contract StrategyVelodromeFactoryClonable is BaseStrategy {
         return false;
     }
 
-    /// @notice Calculates the profit if all claimable assets were sold for USDC (6 decimals).
-    /// @dev Uses Chainlink's feed registry.
-    /// @return Total return in USDC from selling claimable CRV and CVX.
+    /// @notice Calculates the profit if all claimable VELO were sold for USDC (6 decimals).
+    /// @dev Calls Velodrome's VELO-USDC pool directly.
+    /// @return Total return in USDC from selling claimable VELO.
     function claimableProfitInUsdc() public view returns (uint256) {
-        // do a getAmountsOut here, but rough price is $0.10
+        // check price on our VELOv2/USDC pool
+        uint256 veloPrice = IVelodromePool(
+            0x8134A2fDC127549480865fB8E5A9E8A8a95a54c5
+        ).getAmountOut(1e18, address(velo));
 
-        // Oracle returns prices as 6 decimals, so multiply by claimable amount and divide by token decimals (1e18)
-        return (0.1e6 * claimableRewards()) / 1e18;
+        // Pool returns amount as 6 decimals, so multiply by claimable VELO and divide by VELO decimals (1e18)
+        return (veloPrice * claimableRewards()) / 1e18;
     }
 
     /**

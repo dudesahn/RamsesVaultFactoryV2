@@ -18,6 +18,8 @@ def test_simple_harvest(
     target,
     use_yswaps,
     is_gmx,
+    gauge,
+    to_sweep,
 ):
     ## deposit to the vault after approving
     starting_whale = token.balanceOf(whale)
@@ -52,13 +54,22 @@ def test_simple_harvest(
         profit_amount,
         target,
     )
+    print("Profit:", profit / 1e18)
+    # ~0.523774613% left in strategy after harvest
+
+    # check how much velo is claimable to know how effective our selling is
+    print("\nClaimable after first harvest:", strategy.claimableRewards() / 1e18)
+    print("Reward per Token Paid", gauge.userRewardPerTokenPaid(strategy) / 1e18)
+    print("Rewards", gauge.rewards(strategy) / 1e18)
+    print("Strategy velo balance:", to_sweep.balanceOf(strategy) / 1e18)
+
     # check the balance of each of our tokens, should be close to zero
     token0 = interface.IERC20(strategy.poolToken0())
     token1 = interface.IERC20(strategy.poolToken1())
     token0_balance = token0.balanceOf(strategy) / 1e6
     token1_balance = token1.balanceOf(strategy) / 1e18
-    print("\n🧐 Token 0 Balance after Harvest (USDC):", token0_balance)
-    print("🧐 Token 1 Balance after Harvest (BLU):", token1_balance)
+    print("\n🧐 Token 0 Balance after Harvest (USDC):", token0_balance, token0.symbol())
+    print("🧐 Token 1 Balance after Harvest (BLU):", token1_balance, token1.symbol())
 
     # record this here so it isn't affected if we donate via ySwaps
     strategy_assets = strategy.estimatedTotalAssets()
