@@ -186,6 +186,10 @@ def test_setters(
     target,
     strategist,
     is_gmx,
+    route0,
+    route1,
+    template_route0,
+    random_route_1,
 ):
     # deposit to the vault after approving
     starting_whale = token.balanceOf(whale)
@@ -221,6 +225,15 @@ def test_setters(
     with brownie.reverts():
         strategy.setLocalKeepVelo(100, {"from": whale})
     strategy.setLocalKeepVelo(0, {"from": gov})
+
+    # test setting a new route
+    strategy.setSwapRoutes(route0, route1, {"from": gov})
+    with brownie.reverts("token1 route error"):
+        strategy.setSwapRoutes(route0, template_route0, {"from": gov})
+    with brownie.reverts("token0 route error"):
+        strategy.setSwapRoutes(random_route_1, route1, {"from": gov})
+    with brownie.reverts():
+        strategy.setSwapRoutes(route0, route1, {"from": whale})
 
 
 # test sweeping out tokens

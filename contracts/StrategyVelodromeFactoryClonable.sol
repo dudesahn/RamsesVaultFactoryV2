@@ -620,6 +620,17 @@ contract StrategyVelodromeFactoryClonable is BaseStrategy {
         return (veloPrice * claimableRewards()) / 1e18;
     }
 
+    /// @notice Convert our keeper's eth cost into want
+    /// @dev We don't use this since we don't factor call cost into our harvestTrigger.
+    /// @param _ethAmount Amount of ether spent.
+    /// @return Value of ether in want.
+    function ethToWant(
+        uint256 _ethAmount
+    ) public view override returns (uint256) {}
+
+    /* ========== SETTERS ========== */
+    // These functions are useful for setting parameters of the strategy that may need to be adjusted.
+
     /**
      * @notice
      *  Here we set various parameters to optimize our harvestTrigger.
@@ -636,16 +647,42 @@ contract StrategyVelodromeFactoryClonable is BaseStrategy {
         harvestProfitMaxInUsdc = _harvestProfitMaxInUsdc;
     }
 
-    /// @notice Convert our keeper's eth cost into want
-    /// @dev We don't use this since we don't factor call cost into our harvestTrigger.
-    /// @param _ethAmount Amount of ether spent.
-    /// @return Value of ether in want.
-    function ethToWant(
-        uint256 _ethAmount
-    ) public view override returns (uint256) {}
+    /// @notice Here we can override the swap routes set on deployment.
+    /// @dev Must be called by gov or management.
+    /// @param _newSwapRouteForToken0 Swap route for VELO -> token0, using Routes structs.
+    /// @param _newSwapRouteForToken1 Swap route for VELO -> token1, using Routes structs.
+    function setSwapRoutes(
+        IVelodromeRouter.Routes[] memory _newSwapRouteForToken0,
+        IVelodromeRouter.Routes[] memory _newSwapRouteForToken1
+    ) external onlyVaultManagers {
+        delete swapRouteForToken0;
+        delete swapRouteForToken1;
 
-    /* ========== SETTERS ========== */
-    // These functions are useful for setting parameters of the strategy that may need to be adjusted.
+        for (uint i; i < _newSwapRouteForToken0.length; ++i) {
+            swapRouteForToken0.push(_newSwapRouteForToken0[i]);
+        }
+
+        for (uint i; i < _newSwapRouteForToken1.length; ++i) {
+            swapRouteForToken1.push(_newSwapRouteForToken1[i]);
+        }
+
+        // check our swap paths end with our correct token, but only if it's not VELO
+        if (
+            address(poolToken0) != address(velo) &&
+            address(poolToken0) !=
+            swapRouteForToken0[_newSwapRouteForToken0.length - 1].to
+        ) {
+            revert("token0 route error");
+        }
+
+        if (
+            address(poolToken1) != address(velo) &&
+            address(poolToken1) !=
+            swapRouteForToken1[_newSwapRouteForToken1.length - 1].to
+        ) {
+            revert("token1 route error");
+        }
+    }
 
     /// @notice Use this to set or update our keep amounts for this strategy.
     /// @dev Must be less than 10,000. Set in basis points. Only governance can set this.
