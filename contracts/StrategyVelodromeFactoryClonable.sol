@@ -70,7 +70,7 @@ interface IVelodromePool {
 }
 
 interface IDetails {
-    // get details from curve
+    // get details from velodrome
     function name() external view returns (string memory);
 
     function symbol() external view returns (string memory);
@@ -296,7 +296,7 @@ contract StrategyVelodromeFactoryClonable is BaseStrategy {
         harvestProfitMinInUsdc = 1_000e6;
         harvestProfitMaxInUsdc = 100_000e6;
 
-        // want = Curve LP
+        // want = Velodrome LP/pool
         want.approve(_gauge, type(uint256).max);
         poolToken0.safeApprove(address(router), type(uint256).max);
         poolToken1.safeApprove(address(router), type(uint256).max);
@@ -318,7 +318,7 @@ contract StrategyVelodromeFactoryClonable is BaseStrategy {
         return stratName;
     }
 
-    /// @notice Balance of want staked in Curve's gauge.
+    /// @notice Balance of want staked in Velodrome's gauge.
     function stakedBalance() public view returns (uint256) {
         return gauge.balanceOf(address(this));
     }
@@ -333,7 +333,7 @@ contract StrategyVelodromeFactoryClonable is BaseStrategy {
         return balanceOfWant() + stakedBalance();
     }
 
-    /// @notice Claimable VELO rewards. There can be other gauge rewards, but this is what we use for triggering harvests.
+    /// @notice Claimable VELO rewards. We use this for triggering harvests.
     function claimableRewards() public view returns (uint256) {
         return gauge.earned(address(this));
     }
@@ -354,7 +354,7 @@ contract StrategyVelodromeFactoryClonable is BaseStrategy {
         return _veloToRoute(_route);
     }
 
-    // credit to beefy for this useful helper function
+    /// @dev Credit to beefy for this useful helper function, 0xd0B6809f9b6FdeC41280e0C843B4C232425d8015, MIT license
     function _veloToRoute(
         IVelodromeRouter.Routes[] memory _route
     ) internal pure returns (address[] memory) {
@@ -441,8 +441,8 @@ contract StrategyVelodromeFactoryClonable is BaseStrategy {
                 isStablePool,
                 balanceToken0,
                 balanceToken1,
-                1,
-                1,
+                0,
+                0,
                 address(this),
                 block.timestamp
             );
@@ -532,7 +532,7 @@ contract StrategyVelodromeFactoryClonable is BaseStrategy {
         return balanceOfWant();
     }
 
-    // migrate our want token to a new strategy if needed, as well as our CRV
+    // migrate our want token to a new strategy if needed, as well as our VELO
     function prepareMigration(address _newStrategy) internal override {
         uint256 stakedBal = stakedBalance();
         if (stakedBal > 0) {
