@@ -269,21 +269,25 @@ contract StrategyVelodromeFactoryClonable is BaseStrategy {
             swapRouteForToken1.push(_veloSwapRouteForToken1[i]);
         }
 
-        // check our swap paths end with our correct token, but only if it's not VELO
-        if (
-            address(poolToken0) != address(velo) &&
-            address(poolToken0) !=
-            swapRouteForToken0[_veloSwapRouteForToken0.length - 1].to
-        ) {
-            revert("token0 route error");
+        // check to make sure our routes are reasonably correct
+        if (address(poolToken0) != address(velo)) {
+            if (
+                swapRouteForToken0[0].from != address(velo) ||
+                address(poolToken0) !=
+                swapRouteForToken0[_veloSwapRouteForToken0.length - 1].to
+            ) {
+                revert("token0 route error");
+            }
         }
 
-        if (
-            address(poolToken1) != address(velo) &&
-            address(poolToken1) !=
-            swapRouteForToken1[_veloSwapRouteForToken1.length - 1].to
-        ) {
-            revert("token1 route error");
+        if (address(poolToken1) != address(velo)) {
+            if (
+                swapRouteForToken1[0].from != address(velo) ||
+                address(poolToken1) !=
+                swapRouteForToken1[_veloSwapRouteForToken1.length - 1].to
+            ) {
+                revert("token1 route error");
+            }
         }
 
         // set up our baseStrategy vars
@@ -294,8 +298,8 @@ contract StrategyVelodromeFactoryClonable is BaseStrategy {
 
         // want = Curve LP
         want.approve(_gauge, type(uint256).max);
-        poolToken0.approve(address(router), type(uint256).max);
-        poolToken1.approve(address(router), type(uint256).max);
+        poolToken0.safeApprove(address(router), type(uint256).max);
+        poolToken1.safeApprove(address(router), type(uint256).max);
         velo.approve(address(router), type(uint256).max);
 
         // set our strategy's name
@@ -548,6 +552,11 @@ contract StrategyVelodromeFactoryClonable is BaseStrategy {
         override
         returns (address[] memory)
     {}
+
+    /// @notice In case we enter emergencyExit before harvesting, vault managers can use this function to claim our last rewards.
+    function manualRewardClaim() external onlyVaultManagers {
+        gauge.getReward(address(this));
+    }
 
     /* ========== KEEP3RS ========== */
 

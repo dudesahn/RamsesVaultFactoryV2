@@ -31,6 +31,7 @@ def test_migration(
     template_route0,
     template_route1,
     random_route_1,
+    random_route_2,  # starts with DOLA
 ):
 
     ## deposit to the vault after approving
@@ -92,6 +93,24 @@ def test_migration(
             gauge,
             route0,
             template_route0,
+        )
+
+    with brownie.reverts("token0 route error"):
+        test_strategy = gov.deploy(
+            contract_name,
+            vault,
+            gauge,
+            random_route_2,
+            route1,
+        )
+
+    with brownie.reverts("token1 route error"):
+        test_strategy = gov.deploy(
+            contract_name,
+            vault,
+            gauge,
+            route0,
+            random_route_2,
         )
 
     # can we harvest an unactivated strategy? should be no

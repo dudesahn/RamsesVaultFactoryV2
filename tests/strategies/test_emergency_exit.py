@@ -85,7 +85,7 @@ def test_emergency_exit(
     ################# CLAIM ANY REMAINING REWARDS. ADJUST AS NEEDED PER STRATEGY. #################
     # again, harvests in emergency exit don't enter prepareReturn, so we need to claim our rewards manually
     # claim VELO rewards
-    gauge.getReward(strategy.address, {"from": strategy})
+    strategy.manualRewardClaim({"from": gov})
 
     # harvest to send funds back to vault
     (profit, loss, extra) = harvest_strategy(
@@ -264,7 +264,7 @@ def test_emergency_exit_with_profit(
     ################# CLAIM ANY REMAINING REWARDS. ADJUST AS NEEDED PER STRATEGY. #################
     # again, harvests in emergency exit don't enter prepareReturn, so we need to claim our rewards manually
     # claim VELO rewards
-    gauge.getReward(strategy.address, {"from": strategy})
+    strategy.manualRewardClaim({"from": gov})
 
     (profit, loss, extra) = harvest_strategy(
         is_gmx,
@@ -472,7 +472,7 @@ def test_emergency_exit_with_loss(
     ################# CLAIM ANY REMAINING REWARDS. ADJUST AS NEEDED PER STRATEGY. #################
     # again, harvests in emergency exit don't enter prepareReturn, so we need to claim our rewards manually
     # claim VELO rewards
-    gauge.getReward(strategy.address, {"from": strategy})
+    strategy.manualRewardClaim({"from": gov})
 
     # take our losses
     strategy.setDoHealthCheck(False, {"from": gov})
@@ -677,7 +677,7 @@ def test_emergency_exit_with_no_loss(
     ################# CLAIM ANY REMAINING REWARDS. ADJUST AS NEEDED PER STRATEGY. #################
     # again, harvests in emergency exit don't enter prepareReturn, so we need to claim our rewards manually
     # claim VELO rewards
-    gauge.getReward(strategy.address, {"from": strategy})
+    strategy.manualRewardClaim({"from": gov})
 
     # harvest to send all funds back to the vault
     (profit, loss, extra) = harvest_strategy(

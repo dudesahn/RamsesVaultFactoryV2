@@ -468,6 +468,16 @@ def random_route_1(dola, usdc, blue, to_sweep, v2_pool_factory, v1_pool_factory)
     yield random_route_1
 
 
+# route to swap from DOLA to VELO
+@pytest.fixture(scope="session")
+def random_route_2(dola, usdc, blue, to_sweep, v2_pool_factory, v1_pool_factory):
+    random_route_2 = [
+        (dola, usdc, True, v1_pool_factory),
+        (usdc, to_sweep.address, False, v2_pool_factory),
+    ]
+    yield random_route_2
+
+
 @pytest.fixture(scope="function")
 def velo_template(
     StrategyVelodromeFactoryClonable,
