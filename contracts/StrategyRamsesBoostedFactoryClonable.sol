@@ -373,21 +373,6 @@ contract StrategyRamsesBoostedFactoryClonable is BaseStrategy {
     {
         // harvest no matter what
         proxy.harvest(gauge);
-        uint256 ramBalance = ram.balanceOf(address(this));
-
-        // by default this is zero, but if we want any for our voter this will be used
-        uint256 _localKeepRAM = localKeepRAM;
-        address _ramVoter = ramVoter;
-        if (_localKeepRAM > 0 && _ramVoter != address(0)) {
-            uint256 sendToVoter;
-            unchecked {
-                sendToVoter = (ramBalance * _localKeepRAM) / FEE_DENOMINATOR;
-            }
-            if (sendToVoter > 0) {
-                ram.safeTransfer(_ramVoter, sendToVoter);
-            }
-            ramBalance = ram.balanceOf(address(this));
-        }
 
         // don't bother vesting xRAM unless more than 1k xRAM
         // this is also the only time we will check if RAM is fully vested
@@ -405,6 +390,21 @@ contract StrategyRamsesBoostedFactoryClonable is BaseStrategy {
                 if (amount > 0 && block.timestamp > endTime) {
                     xRam.exitVest(i, false);
                 }
+            }
+        }
+
+        uint256 ramBalance = ram.balanceOf(address(this));
+
+        // by default this is zero, but if we want any for our voter this will be used
+        uint256 _localKeepRAM = localKeepRAM;
+        address _ramVoter = ramVoter;
+        if (_localKeepRAM > 0 && _ramVoter != address(0)) {
+            uint256 sendToVoter;
+            unchecked {
+                sendToVoter = (ramBalance * _localKeepRAM) / FEE_DENOMINATOR;
+            }
+            if (sendToVoter > 0) {
+                ram.safeTransfer(_ramVoter, sendToVoter);
             }
             ramBalance = ram.balanceOf(address(this));
         }
