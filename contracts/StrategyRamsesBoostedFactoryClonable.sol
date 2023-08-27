@@ -59,7 +59,6 @@ interface IRamsesPool {
 
     function token1() external view returns (address);
 
-
     function getAmountOut(
         uint256 amountIn,
         address tokenIn
@@ -94,9 +93,13 @@ contract StrategyRamsesBoostedFactoryClonable is BaseStrategy {
     // this means all of our fee values are in basis points
     uint256 internal constant FEE_DENOMINATOR = 10000;
 
-    /// @notice The address of our base token (RAM v2)
+    /// @notice The address of our base token (RAM)
     IERC20 public constant ram =
         IERC20(0xAAA6C1E32C55A7Bfa8066A6FAE9b42650F262418);
+
+    /// @notice The address of our pseudo-locked token (xRAM)
+    IERC20 public constant xRam =
+        IERC20(0xAAA1eE8DC1864AE49185C368e8c64Dd780a50Fb7);
 
     /// @notice Token0 in our pool.
     IERC20 public poolToken0;
@@ -252,7 +255,7 @@ contract StrategyRamsesBoostedFactoryClonable is BaseStrategy {
         isStablePool = pool.stable();
         poolToken0 = IERC20(pool.token0());
         poolToken1 = IERC20(pool.token1());
-        
+
         // create our route state vars
         for (uint i; i < _ramSwapRouteForToken0.length; ++i) {
             swapRouteForToken0.push(_ramSwapRouteForToken0[i]);
@@ -386,8 +389,28 @@ contract StrategyRamsesBoostedFactoryClonable is BaseStrategy {
             ramBalance = ram.balanceOf(address(this));
         }
 
-        // don't bother if we don't get at least 10 RAM
-        if (ramBalance > 10e18) {
+        // don't bother vesting xRAM unless more than 1k xRAM
+        // this is also the only time we will check if RAM is fully vested
+        xRamBalance = xRam.balanceOf(address(this));
+        if (xRamBalance > 1_000e18) {
+            xRam.createVest(xRamBalance);
+            // check our existing vests to see if any have fully unlocked
+            uint256 totalVests = xRam.userTotalVests(address(this));
+            for (i = 0; i < totalVests; ++i) {
+                (uint256 amount, , uint256 endTime, ) = xRamv.vestInfo(
+                    address(this),
+                    i
+                );
+                // exit if we're fully vested
+                if (amount > 0 && block.timestamp > endTime) {
+                    xRam.exitVest(i, false);
+                }
+            }
+            ramBalance = ram.balanceOf(address(this));
+        }
+
+        // don't bother selling if we don't have at least 100 RAM
+        if (ramBalance > 100e18) {
             // sell rewards for more want, have to add from both sides.
             uint256 amountToSwapToken0 = ramBalance / 2;
             uint256 amountToSwapToken1 = ramBalance - amountToSwapToken0;
@@ -475,25 +498,42 @@ contract StrategyRamsesBoostedFactoryClonable is BaseStrategy {
         }
     }
 
-    function quoteStableLiquidityRatio(
-        address tokenA,
-        address tokenB
-    ) internal view returns (uint256 ratio) {
-        IPool pool = IPool(poolFor(tokenA, tokenB, true));
+    /// @notice Manually exit a given xRAM vest if needed.
+    function manualXRamExit(
+        uint256 _vestId,
+        bool _ve
+    ) external onlyVaultManagers {
+        xRam.exitVest(_vestId, _ve);
+    }
 
-        uint256 decimalsA = 10 ** IERC20Metadata(tokenA).decimals();
-        uint256 decimalsB = 10 ** IERC20Metadata(tokenB).decimals();
+    function quoteStableLiquidityRatio() internal view returns (uint256 ratio) {
+        IVelodromePool pool = IVelodromePool(address(want));
+        (
+            uint256 decimals0,
+            uint256 decimals1,
+            ,
+            ,
+            ,
+            address token0,
+            address token1
+        ) = pool.metadata();
 
-        uint256 investment = decimalsA;
-        uint256 out = pool.getAmountOut(investment, tokenA);
-        (uint256 amountA, uint256 amountB, ) = router.quoteAddLiquidity(tokenA, tokenB, true, investment, out);
+        uint256 investment = decimals0;
+        uint256 out = pool.getAmountOut(investment, token0);
+        (uint256 amount0, uint256 amount1, ) = router.quoteAddLiquidity(
+            token0,
+            token1,
+            true,
+            investment,
+            out
+        );
 
-        amountA = (amountA * 1e18) / decimalsA;
-        amountB = (amountB * 1e18) / decimalsB;
-        out = (out * 1e18) / decimalsB;
-        investment = (investment * 1e18) / decimalsA;
+        amount0 = (amount0 * 1e18) / decimals0;
+        amount1 = (amount1 * 1e18) / decimals1;
+        out = (out * 1e18) / decimals1;
+        investment = (investment * 1e18) / decimals0;
 
-        ratio = (((out * 1e18) / investment) * amountA) / amountB;
+        ratio = (((out * 1e18) / investment) * amount0) / amount1;
 
         return (investment * 1e18) / (ratio + 1e18);
     }

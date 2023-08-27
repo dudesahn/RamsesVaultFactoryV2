@@ -7,7 +7,9 @@ import "SafeERC20.sol";
 
 interface VoteEscrow {
     function create_lock(uint, uint, uint) external;
+
     function increase_amount(uint, uint) external;
+
     function withdraw(uint) external;
 }
 
@@ -17,7 +19,7 @@ contract RamsesYRAMVoter {
     address public token; // token to lock
     address public governance = 0x36666EC6315E9606f03fc6527E396B95bcA4D384;
     address public strategy; // StrategyProxy
-    uint256 constant public tokenId = 19; // yearn's veNFT ID
+    uint256 public constant tokenId = 19; // yearn's veNFT ID
     string public name;
 
     function initialize(
@@ -34,24 +36,33 @@ contract RamsesYRAMVoter {
     }
 
     function createLock(uint _value, uint _unlockTime) external {
-        require(msg.sender == strategy || msg.sender == governance, "!authorized");
+        require(
+            msg.sender == strategy || msg.sender == governance,
+            "!authorized"
+        );
         IERC20(token).safeApprove(escrow, 0);
         IERC20(token).safeApprove(escrow, _value);
         VoteEscrow(escrow).create_lock(_value, _unlockTime);
     }
-    
+
     function increaseAmount(uint _value) external {
-        require(msg.sender == strategy || msg.sender == governance, "!authorized");
+        require(
+            msg.sender == strategy || msg.sender == governance,
+            "!authorized"
+        );
         IERC20(token).safeApprove(escrow, 0);
         IERC20(token).safeApprove(escrow, _value);
         VoteEscrow(escrow).increase_amount(tokenId, _value);
     }
-    
+
     function release() external {
-        require(msg.sender == strategy || msg.sender == governance, "!authorized");
+        require(
+            msg.sender == strategy || msg.sender == governance,
+            "!authorized"
+        );
         VoteEscrow(escrow).withdraw(tokenId);
     }
-    
+
     function setStrategy(address _strategy) external {
         require(msg.sender == governance, "!governance");
         strategy = _strategy;
@@ -61,11 +72,18 @@ contract RamsesYRAMVoter {
         require(msg.sender == governance, "!governance");
         governance = _governance;
     }
-    
-    function execute(address payable to, uint value, bytes calldata data) external returns (bool, bytes memory) {
-        require(msg.sender == strategy || msg.sender == governance, "!governance");
-        (bool success, bytes memory result) = to.call{value:value}(data);
-        
+
+    function execute(
+        address payable to,
+        uint value,
+        bytes calldata data
+    ) external returns (bool, bytes memory) {
+        require(
+            msg.sender == strategy || msg.sender == governance,
+            "!governance"
+        );
+        (bool success, bytes memory result) = to.call{value: value}(data);
+
         return (success, result);
     }
 
