@@ -5,12 +5,11 @@ pragma solidity ^0.8.15;
 import "@openzeppelin/contracts/utils/math/Math.sol";
 import "@yearnvaults/contracts/BaseStrategy.sol";
 
-interface IVelodromeRouter {
+interface IRamsesRouter {
     struct Routes {
         address from;
         address to;
         bool stable;
-        address factory;
     }
 
     function addLiquidity(
@@ -35,12 +34,11 @@ interface IVelodromeRouter {
 
     function quoteStableLiquidityRatio(
         address token0,
-        address token1,
-        address factory
+        address token1
     ) external view returns (uint256 ratio);
 }
 
-interface IVelodromeGauge {
+interface IRamsesGauge {
     function deposit(uint256 amount) external;
 
     function balanceOf(address) external view returns (uint256);
@@ -54,14 +52,13 @@ interface IVelodromeGauge {
     function stakingToken() external view returns (address);
 }
 
-interface IVelodromePool {
+interface IRamsesPool {
     function stable() external view returns (bool);
 
     function token0() external view returns (address);
 
     function token1() external view returns (address);
 
-    function factory() external view returns (address);
 
     function getAmountOut(
         uint256 amountIn,
@@ -70,36 +67,36 @@ interface IVelodromePool {
 }
 
 interface IDetails {
-    // get details from velodrome
+    // get details from ramdrome
     function name() external view returns (string memory);
 
     function symbol() external view returns (string memory);
 }
 
-contract StrategyVelodromeFactoryClonable is BaseStrategy {
+contract StrategyRamsesBoostedFactoryClonable is BaseStrategy {
     using SafeERC20 for IERC20;
 
     /* ========== STATE VARIABLES ========== */
 
-    /// @notice Velodrome gauge contract
-    IVelodromeGauge public gauge;
+    /// @notice Ramses gauge contract
+    IRamsesGauge public gauge;
 
-    /// @notice Velodrome v2 router contract
-    IVelodromeRouter public constant router =
-        IVelodromeRouter(0xa062aE8A9c5e11aaA026fc2670B0D65cCc8B2858);
+    /// @notice Ramses v2 router contract
+    IRamsesRouter public constant router =
+        IRamsesRouter(0xAAA87963EFeB6f7E0a2711F397663105Acb1805e);
 
-    /// @notice The percentage of VELO from each harvest that we send to our voter (out of 10,000).
-    uint256 public localKeepVELO;
+    /// @notice The percentage of RAM from each harvest that we send to our voter (out of 10,000).
+    uint256 public localKeepRAM;
 
-    /// @notice The address of our Velodrome voter. This is where we send any keepVELO.
-    address public veloVoter;
+    /// @notice The address of our Ramses voter. This is where we send any keepRAM.
+    address public ramVoter;
 
     // this means all of our fee values are in basis points
     uint256 internal constant FEE_DENOMINATOR = 10000;
 
-    /// @notice The address of our base token (VELO v2)
-    IERC20 public constant velo =
-        IERC20(0x9560e827aF36c94D2Ac33a39bCE1Fe78631088Db);
+    /// @notice The address of our base token (RAM v2)
+    IERC20 public constant ram =
+        IERC20(0xAAA6C1E32C55A7Bfa8066A6FAE9b42650F262418);
 
     /// @notice Token0 in our pool.
     IERC20 public poolToken0;
@@ -107,19 +104,16 @@ contract StrategyVelodromeFactoryClonable is BaseStrategy {
     /// @notice Token1 in our pool.
     IERC20 public poolToken1;
 
-    /// @notice Factory address that deployed our Velodrome pool.
-    address public factory;
-
     /// @notice True if our pool is stable, false if volatile.
     bool public isStablePool;
 
-    /// @notice Array of structs containing our swap route to go from VELO to token0.
+    /// @notice Array of structs containing our swap route to go from RAM to token0.
     /// @dev Struct is from token, to token, and true/false for stable/volatile.
-    IVelodromeRouter.Routes[] public swapRouteForToken0;
+    IRamsesRouter.Routes[] public swapRouteForToken0;
 
-    /// @notice Array of structs containing our swap route to go from VELO to token1.
+    /// @notice Array of structs containing our swap route to go from RAM to token1.
     /// @dev Struct is from token, to token, and true/false for stable/volatile.
-    IVelodromeRouter.Routes[] public swapRouteForToken1;
+    IRamsesRouter.Routes[] public swapRouteForToken1;
 
     /// @notice Minimum profit size in USDC that we want to harvest.
     /// @dev Only used in harvestTrigger.
@@ -140,13 +134,13 @@ contract StrategyVelodromeFactoryClonable is BaseStrategy {
     constructor(
         address _vault,
         address _gauge,
-        IVelodromeRouter.Routes[] memory _veloSwapRouteForToken0,
-        IVelodromeRouter.Routes[] memory _veloSwapRouteForToken1
+        IRamsesRouter.Routes[] memory _ramSwapRouteForToken0,
+        IRamsesRouter.Routes[] memory _ramSwapRouteForToken1
     ) BaseStrategy(_vault) {
         _initializeStrat(
             _gauge,
-            _veloSwapRouteForToken0,
-            _veloSwapRouteForToken1
+            _ramSwapRouteForToken0,
+            _ramSwapRouteForToken1
         );
     }
 
@@ -161,17 +155,17 @@ contract StrategyVelodromeFactoryClonable is BaseStrategy {
     /// @param _rewards If we have any strategist rewards, send them here.
     /// @param _keeper Address to grant the keeper role.
     /// @param _gauge Gauge address for this strategy.
-    /// @param _veloSwapRouteForToken0 Array of structs containing our swap route to go from VELO to token0.
-    /// @param _veloSwapRouteForToken1 Array of structs containing our swap route to go from VELO to token1.
+    /// @param _ramSwapRouteForToken0 Array of structs containing our swap route to go from RAM to token0.
+    /// @param _ramSwapRouteForToken1 Array of structs containing our swap route to go from RAM to token1.
     /// @return newStrategy Address of our new cloned strategy.
-    function cloneStrategyVelodrome(
+    function cloneStrategyRamses(
         address _vault,
         address _strategist,
         address _rewards,
         address _keeper,
         address _gauge,
-        IVelodromeRouter.Routes[] memory _veloSwapRouteForToken0,
-        IVelodromeRouter.Routes[] memory _veloSwapRouteForToken1
+        IRamsesRouter.Routes[] memory _ramSwapRouteForToken0,
+        IRamsesRouter.Routes[] memory _ramSwapRouteForToken1
     ) external returns (address newStrategy) {
         // don't clone a clone
         if (!isOriginal) {
@@ -195,14 +189,14 @@ contract StrategyVelodromeFactoryClonable is BaseStrategy {
             newStrategy := create(0, clone_code, 0x37)
         }
 
-        StrategyVelodromeFactoryClonable(newStrategy).initialize(
+        StrategyRamsesFactoryClonable(newStrategy).initialize(
             _vault,
             _strategist,
             _rewards,
             _keeper,
             _gauge,
-            _veloSwapRouteForToken0,
-            _veloSwapRouteForToken1
+            _ramSwapRouteForToken0,
+            _ramSwapRouteForToken1
         );
 
         emit Cloned(newStrategy);
@@ -215,38 +209,38 @@ contract StrategyVelodromeFactoryClonable is BaseStrategy {
     /// @param _rewards If we have any strategist rewards, send them here.
     /// @param _keeper Address to grant the keeper role.
     /// @param _gauge Gauge address for this strategy.
-    /// @param _veloSwapRouteForToken0 Array of structs containing our swap route to go from VELO to token0.
-    /// @param _veloSwapRouteForToken1 Array of structs containing our swap route to go from VELO to token1.
+    /// @param _ramSwapRouteForToken0 Array of structs containing our swap route to go from RAM to token0.
+    /// @param _ramSwapRouteForToken1 Array of structs containing our swap route to go from RAM to token1.
     function initialize(
         address _vault,
         address _strategist,
         address _rewards,
         address _keeper,
         address _gauge,
-        IVelodromeRouter.Routes[] memory _veloSwapRouteForToken0,
-        IVelodromeRouter.Routes[] memory _veloSwapRouteForToken1
+        IRamsesRouter.Routes[] memory _ramSwapRouteForToken0,
+        IRamsesRouter.Routes[] memory _ramSwapRouteForToken1
     ) public {
         _initialize(_vault, _strategist, _rewards, _keeper);
         _initializeStrat(
             _gauge,
-            _veloSwapRouteForToken0,
-            _veloSwapRouteForToken1
+            _ramSwapRouteForToken0,
+            _ramSwapRouteForToken1
         );
     }
 
     // this is called by our original strategy, as well as any clones
     function _initializeStrat(
         address _gauge,
-        IVelodromeRouter.Routes[] memory _veloSwapRouteForToken0,
-        IVelodromeRouter.Routes[] memory _veloSwapRouteForToken1
+        IRamsesRouter.Routes[] memory _ramSwapRouteForToken0,
+        IRamsesRouter.Routes[] memory _ramSwapRouteForToken1
     ) internal {
         // make sure that we haven't initialized this before
         if (address(gauge) != address(0)) {
             revert("already initialized");
         }
 
-        // gauge, giver of life and VELO
-        gauge = IVelodromeGauge(_gauge);
+        // gauge, giver of life and RAM
+        gauge = IRamsesGauge(_gauge);
 
         // make sure we have the right gauge for our want
         if (gauge.stakingToken() != address(want)) {
@@ -254,37 +248,36 @@ contract StrategyVelodromeFactoryClonable is BaseStrategy {
         }
 
         // check our pool to see if it is stable or volatile, get pool tokens as well (pool = want)
-        IVelodromePool pool = IVelodromePool(address(want));
+        IRamsesPool pool = IRamsesPool(address(want));
         isStablePool = pool.stable();
         poolToken0 = IERC20(pool.token0());
         poolToken1 = IERC20(pool.token1());
-        factory = pool.factory();
-
+        
         // create our route state vars
-        for (uint i; i < _veloSwapRouteForToken0.length; ++i) {
-            swapRouteForToken0.push(_veloSwapRouteForToken0[i]);
+        for (uint i; i < _ramSwapRouteForToken0.length; ++i) {
+            swapRouteForToken0.push(_ramSwapRouteForToken0[i]);
         }
 
-        for (uint i; i < _veloSwapRouteForToken1.length; ++i) {
-            swapRouteForToken1.push(_veloSwapRouteForToken1[i]);
+        for (uint i; i < _ramSwapRouteForToken1.length; ++i) {
+            swapRouteForToken1.push(_ramSwapRouteForToken1[i]);
         }
 
         // check to make sure our routes are reasonably correct
-        if (address(poolToken0) != address(velo)) {
+        if (address(poolToken0) != address(ram)) {
             if (
-                swapRouteForToken0[0].from != address(velo) ||
+                swapRouteForToken0[0].from != address(ram) ||
                 address(poolToken0) !=
-                swapRouteForToken0[_veloSwapRouteForToken0.length - 1].to
+                swapRouteForToken0[_ramSwapRouteForToken0.length - 1].to
             ) {
                 revert("token0 route error");
             }
         }
 
-        if (address(poolToken1) != address(velo)) {
+        if (address(poolToken1) != address(ram)) {
             if (
-                swapRouteForToken1[0].from != address(velo) ||
+                swapRouteForToken1[0].from != address(ram) ||
                 address(poolToken1) !=
-                swapRouteForToken1[_veloSwapRouteForToken1.length - 1].to
+                swapRouteForToken1[_ramSwapRouteForToken1.length - 1].to
             ) {
                 revert("token1 route error");
             }
@@ -296,16 +289,16 @@ contract StrategyVelodromeFactoryClonable is BaseStrategy {
         harvestProfitMinInUsdc = 1_000e6;
         harvestProfitMaxInUsdc = 100_000e6;
 
-        // want = Velodrome LP/pool
-        want.approve(_gauge, type(uint256).max);
+        // want = Ramses LP/pool
+        want.approve(proxy, type(uint256).max);
         poolToken0.safeApprove(address(router), type(uint256).max);
         poolToken1.safeApprove(address(router), type(uint256).max);
-        velo.approve(address(router), type(uint256).max);
+        ram.approve(address(router), type(uint256).max);
 
         // set our strategy's name
         stratName = string(
             abi.encodePacked(
-                "StrategyVelodromeFactory-",
+                "StrategyRamsesFactory-",
                 IDetails(address(want)).symbol()
             )
         );
@@ -318,9 +311,9 @@ contract StrategyVelodromeFactoryClonable is BaseStrategy {
         return stratName;
     }
 
-    /// @notice Balance of want staked in Velodrome's gauge.
+    /// @notice Balance of want staked in Ramses's gauge.
     function stakedBalance() public view returns (uint256) {
-        return gauge.balanceOf(address(this));
+        return proxy.balanceOf(gauge);
     }
 
     /// @notice Balance of want sitting in our strategy.
@@ -333,30 +326,30 @@ contract StrategyVelodromeFactoryClonable is BaseStrategy {
         return balanceOfWant() + stakedBalance();
     }
 
-    /// @notice Claimable VELO rewards. We use this for triggering harvests.
+    /// @notice Claimable RAM rewards. We use this for triggering harvests.
     function claimableRewards() public view returns (uint256) {
-        return gauge.earned(address(this));
+        return gauge.earned(proxy.voter());
     }
 
-    /// @notice Use this to check our current swap route of VELO to token0.
+    /// @notice Use this to check our current swap route of RAM to token0.
     /// @dev Since this is a factory, users may set non-optimal paths or liquidity may change over time.
     /// @return Array of tokens we swap through.
-    function veloRouteToToken0() external view returns (address[] memory) {
-        IVelodromeRouter.Routes[] memory _route = swapRouteForToken0;
-        return _veloToRoute(_route);
+    function ramRouteToToken0() external view returns (address[] memory) {
+        IRamsesRouter.Routes[] memory _route = swapRouteForToken0;
+        return _ramToRoute(_route);
     }
 
-    /// @notice Use this to check our current swap route of VELO to token1.
+    /// @notice Use this to check our current swap route of RAM to token1.
     /// @dev Since this is a factory, users may set non-optimal paths or liquidity may change over time.
     /// @return Array of tokens we swap through.
-    function veloRouteToToken1() external view returns (address[] memory) {
-        IVelodromeRouter.Routes[] memory _route = swapRouteForToken1;
-        return _veloToRoute(_route);
+    function ramRouteToToken1() external view returns (address[] memory) {
+        IRamsesRouter.Routes[] memory _route = swapRouteForToken1;
+        return _ramToRoute(_route);
     }
 
     /// @dev Credit to beefy for this useful helper function, 0xd0B6809f9b6FdeC41280e0C843B4C232425d8015, MIT license
-    function _veloToRoute(
-        IVelodromeRouter.Routes[] memory _route
+    function _ramToRoute(
+        IRamsesRouter.Routes[] memory _route
     ) internal pure returns (address[] memory) {
         address[] memory route = new address[](_route.length + 1);
         route[0] = _route[0].from;
@@ -376,41 +369,40 @@ contract StrategyVelodromeFactoryClonable is BaseStrategy {
         returns (uint256 _profit, uint256 _loss, uint256 _debtPayment)
     {
         // harvest no matter what
-        gauge.getReward(address(this));
-        uint256 veloBalance = velo.balanceOf(address(this));
+        proxy.harvest(gauge);
+        uint256 ramBalance = ram.balanceOf(address(this));
 
         // by default this is zero, but if we want any for our voter this will be used
-        uint256 _localKeepVELO = localKeepVELO;
-        address _veloVoter = veloVoter;
-        if (_localKeepVELO > 0 && _veloVoter != address(0)) {
+        uint256 _localKeepRAM = localKeepRAM;
+        address _ramVoter = ramVoter;
+        if (_localKeepRAM > 0 && _ramVoter != address(0)) {
             uint256 sendToVoter;
             unchecked {
-                sendToVoter = (veloBalance * _localKeepVELO) / FEE_DENOMINATOR;
+                sendToVoter = (ramBalance * _localKeepRAM) / FEE_DENOMINATOR;
             }
             if (sendToVoter > 0) {
-                velo.safeTransfer(_veloVoter, sendToVoter);
+                ram.safeTransfer(_ramVoter, sendToVoter);
             }
-            veloBalance = velo.balanceOf(address(this));
+            ramBalance = ram.balanceOf(address(this));
         }
 
-        // don't bother if we don't get at least 10 VELO
-        if (veloBalance > 10e18) {
+        // don't bother if we don't get at least 10 RAM
+        if (ramBalance > 10e18) {
             // sell rewards for more want, have to add from both sides.
-            uint256 amountToSwapToken0 = veloBalance / 2;
-            uint256 amountToSwapToken1 = veloBalance - amountToSwapToken0;
+            uint256 amountToSwapToken0 = ramBalance / 2;
+            uint256 amountToSwapToken1 = ramBalance - amountToSwapToken0;
 
             // if stable, do some more fancy math, not as easy as swapping half
             if (isStablePool) {
-                uint256 ratio = router.quoteStableLiquidityRatio(
+                uint256 ratio = quoteStableLiquidityRatio(
                     address(poolToken0),
-                    address(poolToken1),
-                    factory
+                    address(poolToken1)
                 );
-                amountToSwapToken1 = (veloBalance * ratio) / 1e18;
-                amountToSwapToken0 = veloBalance - amountToSwapToken1;
+                amountToSwapToken1 = (ramBalance * ratio) / 1e18;
+                amountToSwapToken0 = ramBalance - amountToSwapToken1;
             }
 
-            if (address(poolToken0) != address(velo)) {
+            if (address(poolToken0) != address(ram)) {
                 router.swapExactTokensForTokens(
                     amountToSwapToken0,
                     0,
@@ -420,7 +412,7 @@ contract StrategyVelodromeFactoryClonable is BaseStrategy {
                 );
             }
 
-            if (address(poolToken1) != address(velo)) {
+            if (address(poolToken1) != address(ram)) {
                 router.swapExactTokensForTokens(
                     amountToSwapToken1,
                     0,
@@ -483,6 +475,29 @@ contract StrategyVelodromeFactoryClonable is BaseStrategy {
         }
     }
 
+    function quoteStableLiquidityRatio(
+        address tokenA,
+        address tokenB
+    ) internal view returns (uint256 ratio) {
+        IPool pool = IPool(poolFor(tokenA, tokenB, true));
+
+        uint256 decimalsA = 10 ** IERC20Metadata(tokenA).decimals();
+        uint256 decimalsB = 10 ** IERC20Metadata(tokenB).decimals();
+
+        uint256 investment = decimalsA;
+        uint256 out = pool.getAmountOut(investment, tokenA);
+        (uint256 amountA, uint256 amountB, ) = router.quoteAddLiquidity(tokenA, tokenB, true, investment, out);
+
+        amountA = (amountA * 1e18) / decimalsA;
+        amountB = (amountB * 1e18) / decimalsB;
+        out = (out * 1e18) / decimalsB;
+        investment = (investment * 1e18) / decimalsA;
+
+        ratio = (((out * 1e18) / investment) * amountA) / amountB;
+
+        return (investment * 1e18) / (ratio + 1e18);
+    }
+
     function adjustPosition(uint256 _debtOutstanding) internal override {
         // if in emergency exit, we don't want to deploy any more funds
         if (emergencyExit) {
@@ -492,7 +507,8 @@ contract StrategyVelodromeFactoryClonable is BaseStrategy {
         // Deposit all of our LP tokens in the gauge
         uint256 toInvest = balanceOfWant();
         if (toInvest > 0) {
-            gauge.deposit(toInvest);
+            want.safeTransfer(address(proxy), toInvest);
+            proxy.deposit(gauge, address(want));
         }
     }
 
@@ -509,7 +525,11 @@ contract StrategyVelodromeFactoryClonable is BaseStrategy {
                     neededFromStaked = _amountNeeded - wantBal;
                 }
                 // withdraw whatever extra funds we need
-                gauge.withdraw(Math.min(stakedBal, neededFromStaked));
+                proxy.withdraw(
+                    gauge,
+                    address(want),
+                    Math.min(stakedBal, neededFromStaked)
+                );
             }
             uint256 withdrawnBal = balanceOfWant();
             _liquidatedAmount = Math.min(_amountNeeded, withdrawnBal);
@@ -527,21 +547,21 @@ contract StrategyVelodromeFactoryClonable is BaseStrategy {
         uint256 stakedBal = stakedBalance();
         if (stakedBal > 0) {
             // don't bother withdrawing zero, save gas where we can
-            gauge.withdraw(stakedBal);
+            proxy.withdraw(gauge, address(want), stakedBal);
         }
         return balanceOfWant();
     }
 
-    // migrate our want token to a new strategy if needed, as well as our VELO
+    // migrate our want token to a new strategy if needed, as well as our RAM
     function prepareMigration(address _newStrategy) internal override {
         uint256 stakedBal = stakedBalance();
         if (stakedBal > 0) {
-            gauge.withdraw(stakedBal);
+            proxy.withdraw(gauge, address(want), stakedBal);
         }
-        uint256 veloBal = velo.balanceOf(address(this));
+        uint256 ramBal = ram.balanceOf(address(this));
 
-        if (veloBal > 0) {
-            velo.safeTransfer(_newStrategy, veloBal);
+        if (ramBal > 0) {
+            ram.safeTransfer(_newStrategy, ramBal);
         }
     }
 
@@ -555,7 +575,7 @@ contract StrategyVelodromeFactoryClonable is BaseStrategy {
 
     /// @notice In case we enter emergencyExit before harvesting, vault managers can use this function to claim our last rewards.
     function manualRewardClaim() external onlyVaultManagers {
-        gauge.getReward(address(this));
+        gauge.getReward(address(this), address(ram));
     }
 
     /* ========== KEEP3RS ========== */
@@ -616,17 +636,17 @@ contract StrategyVelodromeFactoryClonable is BaseStrategy {
         return false;
     }
 
-    /// @notice Calculates the profit if all claimable VELO were sold for USDC (6 decimals).
-    /// @dev Calls Velodrome's VELO-USDC pool directly.
-    /// @return Total return in USDC from selling claimable VELO.
+    /// @notice Calculates the profit if all claimable RAM were sold for USDC (6 decimals).
+    /// @dev Calls Ramses's RAM-USDC pool directly.
+    /// @return Total return in USDC from selling claimable RAM.
     function claimableProfitInUsdc() public view returns (uint256) {
-        // check price on our VELOv2/USDC pool
-        uint256 veloPrice = IVelodromePool(
+        // check price on our RAMv2/USDC pool
+        uint256 ramPrice = IRamsesPool(
             0x8134A2fDC127549480865fB8E5A9E8A8a95a54c5
-        ).getAmountOut(1e18, address(velo));
+        ).getAmountOut(1e18, address(ram));
 
-        // Pool returns amount as 6 decimals, so multiply by claimable VELO and divide by VELO decimals (1e18)
-        return (veloPrice * claimableRewards()) / 1e18;
+        // Pool returns amount as 6 decimals, so multiply by claimable RAM and divide by RAM decimals (1e18)
+        return (ramPrice * claimableRewards()) / 1e18;
     }
 
     /// @notice Convert our keeper's eth cost into want
@@ -658,11 +678,11 @@ contract StrategyVelodromeFactoryClonable is BaseStrategy {
 
     /// @notice Here we can override the swap routes set on deployment.
     /// @dev Must be called by gov or management.
-    /// @param _newSwapRouteForToken0 Swap route for VELO -> token0, using Routes structs.
-    /// @param _newSwapRouteForToken1 Swap route for VELO -> token1, using Routes structs.
+    /// @param _newSwapRouteForToken0 Swap route for RAM -> token0, using Routes structs.
+    /// @param _newSwapRouteForToken1 Swap route for RAM -> token1, using Routes structs.
     function setSwapRoutes(
-        IVelodromeRouter.Routes[] memory _newSwapRouteForToken0,
-        IVelodromeRouter.Routes[] memory _newSwapRouteForToken1
+        IRamsesRouter.Routes[] memory _newSwapRouteForToken0,
+        IRamsesRouter.Routes[] memory _newSwapRouteForToken1
     ) external onlyVaultManagers {
         delete swapRouteForToken0;
         delete swapRouteForToken1;
@@ -675,9 +695,9 @@ contract StrategyVelodromeFactoryClonable is BaseStrategy {
             swapRouteForToken1.push(_newSwapRouteForToken1[i]);
         }
 
-        // check our swap paths end with our correct token, but only if it's not VELO
+        // check our swap paths end with our correct token, but only if it's not RAM
         if (
-            address(poolToken0) != address(velo) &&
+            address(poolToken0) != address(ram) &&
             address(poolToken0) !=
             swapRouteForToken0[_newSwapRouteForToken0.length - 1].to
         ) {
@@ -685,7 +705,7 @@ contract StrategyVelodromeFactoryClonable is BaseStrategy {
         }
 
         if (
-            address(poolToken1) != address(velo) &&
+            address(poolToken1) != address(ram) &&
             address(poolToken1) !=
             swapRouteForToken1[_newSwapRouteForToken1.length - 1].to
         ) {
@@ -695,22 +715,22 @@ contract StrategyVelodromeFactoryClonable is BaseStrategy {
 
     /// @notice Use this to set or update our keep amounts for this strategy.
     /// @dev Must be less than 10,000. Set in basis points. Only governance can set this.
-    /// @param _keepVelo Percent of each VELO harvest to send to our voter.
-    function setLocalKeepVelo(uint256 _keepVelo) external onlyGovernance {
-        if (_keepVelo > 10_000) {
+    /// @param _keepRam Percent of each RAM harvest to send to our voter.
+    function setLocalKeepRam(uint256 _keepRam) external onlyGovernance {
+        if (_keepRam > 10_000) {
             revert();
         }
-        if (_keepVelo > 0 && veloVoter == address(0)) {
+        if (_keepRam > 0 && ramVoter == address(0)) {
             revert();
         }
-        localKeepVELO = _keepVelo;
+        localKeepRAM = _keepRam;
     }
 
     /// @notice Use this to set or update our voter contracts.
-    /// @dev For Velo strategies, this is where we send our keepVELO.
+    /// @dev For Ram strategies, this is where we send our keepRAM.
     ///  Only governance can set this.
-    /// @param _veloVoter Address of our velodrome voter.
-    function setVoter(address _veloVoter) external onlyGovernance {
-        veloVoter = _veloVoter;
+    /// @param _ramVoter Address of our ramdrome voter.
+    function setVoter(address _ramVoter) external onlyGovernance {
+        ramVoter = _ramVoter;
     }
 }
